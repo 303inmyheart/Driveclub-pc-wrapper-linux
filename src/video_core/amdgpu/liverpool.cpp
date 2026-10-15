@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cstddef>
+#include <cstdlib>
+#include <thread>
+#include <immintrin.h>
 #include <boost/preprocessor/stringize.hpp>
 
 #include "common/assert.h"
@@ -52,6 +55,21 @@ static const char* acb_task_name[] = NAME_ARRAY(ACB_TASK, MAX_NAMES);
 #define RESUME_CE(task) RESUME(task, ccb_task_name)
 #define RESUME_GFX(task) RESUME(task, dcb_task_name)
 #define RESUME_ASC(task, id) RESUME(task, acb_task_name[id])
+
+// driveclub-pc: wait loops. The task marks itself blocked before yielding, so the scheduling loop
+// in Process can tell "every task is waiting" from "work is being done"; the WaitScope books the
+// wait for the frame profiler (DCPC_PROFILE=1).
+static thread_local bool t_task_blocked = false;
+#define DCPC_WAIT(wait_queue, address, condition, yield_stmt)                                     \
+    {                                                                                              \
+        DriveclubPC::Profiler::WaitScope dcpc_wait{DriveclubPC::Profiler::WaitQueue::wait_queue,   \
+                                                   address};                                       \
+        while (!(condition)) {                                                                     \
+            t_task_blocked = true;                                                                 \
+            dcpc_wait.Blocked();                                                                   \
+            yield_stmt;                                                                            \
+        }                                                                                          \
+    }
 
 std::array<u8, 48_KB> Liverpool::ConstantEngine::constants_heap;
 
@@ -319,6 +337,20 @@ void Liverpool::DrainCommands() {
     }
 }
 
+// driveclub-pc: one backoff step while every queued task is blocked in a wait. Short pauses first
+// (a label written by another thread usually flips within microseconds), then give the core away.
+// No sleeping: Windows sleeps are at least ~1 ms, too coarse for waits inside a 16 ms frame.
+static void CpBackoff(u32 round) {
+    DriveclubPC::Profiler::AddBackoff();
+    if (round < 64) {
+        for (int i = 0; i < 32; ++i) {
+            _mm_pause();
+        }
+    } else {
+        std::this_thread::yield();
+    }
+}
+
 void Liverpool::Process(std::stop_token stoken) {
     Common::SetCurrentThreadName("shadPS4:GpuCommandProcessor");
     gpu_id = std::this_thread::get_id();
@@ -337,6 +369,11 @@ void Liverpool::Process(std::stop_token stoken) {
 
     // driveclub-pc: frame profiler (DCPC_PROFILE=1) splits this thread's time into idle and busy.
     const bool profile = DriveclubPC::Profiler::Enabled();
+    const char* backoff_env = std::getenv("DCPC_CP_BACKOFF");
+    // Off by default: an A/B race test (2+2 runs, docs/benchmarks.md) measured 38.3 FPS with it
+    // and 40.1 FPS without; the waits it targets are on work the game has not submitted yet.
+    const bool cp_backoff = backoff_env && backoff_env[0] == '1';
+    LOG_INFO(Render, "Command processor wait backoff: {}", cp_backoff ? "on (DCPC_CP_BACKOFF=1)" : "off");
     while (!stoken.stop_requested()) {
         const u64 idle_start = profile ? DriveclubPC::Profiler::NowNs() : 0;
         {
@@ -356,12 +393,28 @@ void Liverpool::Process(std::stop_token stoken) {
 
         curr_qid = -1;
 
+        // driveclub-pc: when every queued task is blocked in a wait, the original loop kept
+        // round-robining all mapped queues, locking each (even empty ones) and resuming every
+        // task, which measured as ~27 % of this thread in lock calls. Now empty queues are
+        // skipped without locking, and once a full round made no progress the loop backs off
+        // (pause, then yield) before polling again. Opt-in: DCPC_CP_BACKOFF=1; with it off the
+        // loop behaves as upstream (it still tracks `pending`, which is cheap).
+        u32 rounds_without_progress = 0;
+        u32 visits_without_progress = 0;
         while (num_submits || num_commands) {
             ProcessCommands();
 
             curr_qid = (curr_qid + 1) % num_mapped_queues;
 
             auto& queue = mapped_queues[curr_qid];
+
+            if (cp_backoff && queue.pending.load(std::memory_order_acquire) == 0) {
+                if (++visits_without_progress >= num_mapped_queues) {
+                    visits_without_progress = 0;
+                    CpBackoff(rounds_without_progress++);
+                }
+                continue;
+            }
 
             Task::Handle task{};
             {
@@ -371,13 +424,25 @@ void Liverpool::Process(std::stop_token stoken) {
                 }
                 task = queue.submits.front();
             }
+            t_task_blocked = false;
             task.resume();
+
+            if (!task.done() && t_task_blocked) {
+                if (cp_backoff && ++visits_without_progress >= num_mapped_queues) {
+                    visits_without_progress = 0;
+                    CpBackoff(rounds_without_progress++);
+                }
+            } else {
+                visits_without_progress = 0;
+                rounds_without_progress = 0;
+            }
 
             if (task.done()) {
                 task.destroy();
 
                 std::scoped_lock lock{queue.m_access};
                 queue.submits.pop();
+                queue.pending.fetch_sub(1, std::memory_order_release);
 
                 // The only submit_cv waiters on this edge block until the
                 // queue drains (num_submits == 0); waking them per popped
@@ -1033,6 +1098,7 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
         }
         case PM4ItOpcode::EventWriteEos: {
             const auto* event_eos = reinterpret_cast<const PM4CmdEventWriteEos*>(header);
+            DriveclubPC::Profiler::NoteGpuWrite(event_eos->Address<u64>());
             FenceDrainAndDownload(rasterizer);
             event_eos->SignalFence([](void* address, u64 data, u32 num_bytes) {
                 auto* memory = Core::Memory::Instance();
@@ -1050,6 +1116,7 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
         }
         case PM4ItOpcode::EventWriteEop: {
             const auto* event_eop = reinterpret_cast<const PM4CmdEventWriteEop*>(header);
+            DriveclubPC::Profiler::NoteGpuWrite(reinterpret_cast<u64>(event_eop->Address<u8>()));
             FenceDrainAndDownload(rasterizer);
             event_eop->SignalFence(
                 [](void* address, u64 data, u32 num_bytes) {
@@ -1097,6 +1164,7 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
         }
         case PM4ItOpcode::WriteData: {
             const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(header);
+            DriveclubPC::Profiler::NoteGpuWrite(write_data->Address<u64>());
             ASSERT(write_data->dst_sel.Value() == 2 || write_data->dst_sel.Value() == 5);
             const u32 data_size = (header->type3.count.Value() - 2) * 4;
             if (!write_data->wr_one_addr.Value()) {
@@ -1208,9 +1276,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             if (mem_semaphore->IsSignaling()) {
                 mem_semaphore->Signal();
             } else {
-                while (!mem_semaphore->Signaled()) {
-                    YIELD_GFX();
-                }
+                DCPC_WAIT(Gfx, mem_semaphore->Address<u64>(), mem_semaphore->Signaled(), YIELD_GFX());
                 mem_semaphore->Decrement();
             }
             break;
@@ -1220,9 +1286,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             const PM4CmdRewind* rewind = reinterpret_cast<const PM4CmdRewind*>(header);
-            while (!rewind->Valid()) {
-                YIELD_GFX();
-            }
+            DCPC_WAIT(Gfx, reinterpret_cast<u64>(rewind), rewind->Valid(), YIELD_GFX());
             break;
         }
         case PM4ItOpcode::WaitRegMem: {
@@ -1238,9 +1302,8 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 vo_port->WaitVoLabel([&] { return wait_reg_mem->Test(regs.reg_array); });
                 break;
             }
-            while (!wait_reg_mem->Test(regs.reg_array)) {
-                YIELD_GFX();
-            }
+            DCPC_WAIT(Gfx, wait_reg_mem->Address<u64>(), wait_reg_mem->Test(regs.reg_array),
+                      YIELD_GFX());
             break;
         }
         case PM4ItOpcode::IndirectBuffer: {
@@ -1402,9 +1465,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                 break;
             }
             const PM4CmdRewind* rewind = reinterpret_cast<const PM4CmdRewind*>(header);
-            while (!rewind->Valid()) {
-                YIELD_ASC(vqid);
-            }
+            DCPC_WAIT(Asc, reinterpret_cast<u64>(rewind), rewind->Valid(), YIELD_ASC(vqid));
             break;
         }
         case PM4ItOpcode::SetShReg: {
@@ -1481,6 +1542,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
         case PM4ItOpcode::WriteData: {
             const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(header);
+            DriveclubPC::Profiler::NoteGpuWrite(write_data->Address<u64>());
             ASSERT(write_data->dst_sel.Value() == 2 || write_data->dst_sel.Value() == 5);
             const u32 data_size = (header->type3.count.Value() - 2) * 4;
             if (!write_data->wr_one_addr.Value()) {
@@ -1497,9 +1559,8 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             if (mem_semaphore->IsSignaling()) {
                 mem_semaphore->Signal();
             } else {
-                while (!mem_semaphore->Signaled()) {
-                    YIELD_ASC(vqid);
-                }
+                DCPC_WAIT(Asc, mem_semaphore->Address<u64>(), mem_semaphore->Signaled(),
+                          YIELD_ASC(vqid));
                 mem_semaphore->Decrement();
             }
             break;
@@ -1507,13 +1568,13 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         case PM4ItOpcode::WaitRegMem: {
             const auto* wait_reg_mem = reinterpret_cast<const PM4CmdWaitRegMem*>(header);
             ASSERT(wait_reg_mem->engine.Value() == PM4CmdWaitRegMem::Engine::Me);
-            while (!wait_reg_mem->Test(regs.reg_array)) {
-                YIELD_ASC(vqid);
-            }
+            DCPC_WAIT(Asc, wait_reg_mem->Address<u64>(), wait_reg_mem->Test(regs.reg_array),
+                      YIELD_ASC(vqid));
             break;
         }
         case PM4ItOpcode::ReleaseMem: {
             const auto* release_mem = reinterpret_cast<const PM4CmdReleaseMem*>(header);
+            DriveclubPC::Profiler::NoteGpuWrite(release_mem->Address<u64>());
             // The compute queue has no packet-run guard, so its dispatch
             // marks reach a drain here, at its waits and at every submit.
             FenceDrainAndDownload(rasterizer);
@@ -1590,6 +1651,7 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
     {
         std::scoped_lock lock{queue.m_access};
         queue.submits.emplace(task.handle);
+        queue.pending.fetch_add(1, std::memory_order_release);
     }
 
     std::scoped_lock lk{submit_mutex};
@@ -1606,6 +1668,7 @@ void Liverpool::SubmitAsc(u32 gnm_vqid, std::span<const u32> acb) {
     {
         std::scoped_lock lock{queue.m_access};
         queue.submits.emplace(task.handle);
+        queue.pending.fetch_add(1, std::memory_order_release);
     }
 
     std::scoped_lock lk{submit_mutex};

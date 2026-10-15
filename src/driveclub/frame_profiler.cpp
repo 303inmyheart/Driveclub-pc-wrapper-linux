@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2026 Driveclub-PC contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "common/logging/log.h"
 #include "common/path_util.h"
@@ -20,19 +24,37 @@ namespace DriveclubPC::Profiler {
 
 namespace {
 
-struct Counters {
+// Written by several threads: locked RMW.
+struct SharedCounters {
     std::atomic<u64> cp_busy_ns{};
     std::atomic<u64> cp_idle_ns{};
     std::atomic<u64> sched_wait_ticks{};
     std::atomic<u64> present_wait_ns{};
     std::atomic<u64> pipelines{};
     std::atomic<u64> pipeline_ns{};
-    std::atomic<u64> draws{};
-    std::atomic<u64> dispatches{};
 };
 
-Counters g_counters;
+// Written only by the command processor thread: monotonically growing totals updated with plain
+// load+store (no lock prefix); the frame writer reads them and keeps the previous snapshot.
+struct CpCounters {
+    std::atomic<u64> draws{};
+    std::atomic<u64> dispatches{};
+    std::atomic<u64> backoffs{};
+    std::atomic<u64> waits{};
+    std::atomic<u64> wait_gfx_ns{};
+    std::atomic<u64> wait_asc_ns{};
+    std::atomic<u64> wait_gpu_label_ns{};
+    std::atomic<u64> wait_cpu_label_ns{};
+};
+
+SharedCounters g_shared;
+CpCounters g_cp;
 std::atomic<int> g_enabled{-1}; // -1 = not decided yet
+std::atomic<u64> g_frames{0};
+
+void Bump(std::atomic<u64>& c, u64 v) {
+    c.store(c.load(std::memory_order_relaxed) + v, std::memory_order_relaxed);
+}
 
 struct Writer {
     std::mutex mutex;
@@ -40,8 +62,23 @@ struct Writer {
     u64 frame = 0;
     u64 last_frame_ns = 0;
     double tsc_ticks_per_ns = 0.0;
+    // previous snapshots of the CpCounters
+    u64 draws = 0, dispatches = 0, backoffs = 0, waits = 0;
+    u64 wait_gfx = 0, wait_asc = 0, wait_gpu = 0, wait_cpu = 0;
 };
 Writer g_writer;
+
+// Command processor thread only.
+struct AddressStat {
+    u64 ns = 0;
+    u64 count = 0;
+    bool gpu_written = false;
+    bool gfx = false;
+    bool asc = false;
+};
+std::unordered_set<u64> g_gpu_written;
+std::unordered_map<u64, AddressStat> g_wait_addresses;
+u64 g_last_address_dump_frame = 0;
 
 bool Decide() {
     const char* env = std::getenv("DCPC_PROFILE");
@@ -54,7 +91,8 @@ bool Decide() {
             std::setvbuf(g_writer.file, nullptr, _IOFBF, 1 << 16);
             std::fprintf(g_writer.file,
                          "frame,qpc_ms,frame_ms,cp_busy_ms,cp_idle_ms,sched_wait_ms,"
-                         "present_wait_ms,pipelines,pipeline_ms,draws,dispatches\n");
+                         "present_wait_ms,pipelines,pipeline_ms,draws,dispatches,wait_gfx_ms,"
+                         "wait_asc_ms,wait_gpu_label_ms,wait_cpu_label_ms,waits,backoffs\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
             LOG_INFO(Debug, "Driveclub-PC frame profiler writing {}", path.string());
         } else {
@@ -69,6 +107,17 @@ u64 Take(std::atomic<u64>& counter) {
     return counter.exchange(0, std::memory_order_relaxed);
 }
 
+u64 Delta(const std::atomic<u64>& counter, u64& previous) {
+    const u64 now = counter.load(std::memory_order_relaxed);
+    const u64 d = now - previous;
+    previous = now;
+    return d;
+}
+
+double Ms(u64 ns) {
+    return static_cast<double>(ns) / 1e6;
+}
+
 double QpcMs() {
 #ifdef _WIN32
     LARGE_INTEGER now, freq;
@@ -78,6 +127,21 @@ double QpcMs() {
 #else
     return static_cast<double>(NowNs()) / 1e6;
 #endif
+}
+
+void DumpWaitAddresses(u64 frame) {
+    std::vector<std::pair<u64, AddressStat>> v(g_wait_addresses.begin(), g_wait_addresses.end());
+    std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.second.ns > b.second.ns; });
+    LOG_INFO(Debug, "Wait addresses, frames {}-{} ({} distinct):", g_last_address_dump_frame, frame,
+             v.size());
+    for (size_t i = 0; i < v.size() && i < 12; ++i) {
+        const auto& [addr, s] = v[i];
+        LOG_INFO(Debug, "  {:#x}: {:.1f} ms in {} waits, {}, queues{}{}", addr, Ms(s.ns), s.count,
+                 s.gpu_written ? "written by a GPU queue" : "not written by any GPU queue (CPU)",
+                 s.gfx ? " gfx" : "", s.asc ? " asc" : "");
+    }
+    g_wait_addresses.clear();
+    g_last_address_dump_frame = frame;
 }
 
 } // namespace
@@ -99,26 +163,61 @@ u64 NowNs() {
 }
 
 void AddCpBusy(u64 ns) {
-    g_counters.cp_busy_ns.fetch_add(ns, std::memory_order_relaxed);
+    g_shared.cp_busy_ns.fetch_add(ns, std::memory_order_relaxed);
 }
 void AddCpIdle(u64 ns) {
-    g_counters.cp_idle_ns.fetch_add(ns, std::memory_order_relaxed);
+    g_shared.cp_idle_ns.fetch_add(ns, std::memory_order_relaxed);
 }
 void AddSchedWaitTicks(u64 tsc_ticks) {
-    g_counters.sched_wait_ticks.fetch_add(tsc_ticks, std::memory_order_relaxed);
+    g_shared.sched_wait_ticks.fetch_add(tsc_ticks, std::memory_order_relaxed);
 }
 void AddPresentWait(u64 ns) {
-    g_counters.present_wait_ns.fetch_add(ns, std::memory_order_relaxed);
+    g_shared.present_wait_ns.fetch_add(ns, std::memory_order_relaxed);
 }
 void AddPipeline(u64 ns) {
-    g_counters.pipelines.fetch_add(1, std::memory_order_relaxed);
-    g_counters.pipeline_ns.fetch_add(ns, std::memory_order_relaxed);
+    g_shared.pipelines.fetch_add(1, std::memory_order_relaxed);
+    g_shared.pipeline_ns.fetch_add(ns, std::memory_order_relaxed);
 }
 void AddDraw() {
-    g_counters.draws.fetch_add(1, std::memory_order_relaxed);
+    Bump(g_cp.draws, 1);
 }
 void AddDispatch() {
-    g_counters.dispatches.fetch_add(1, std::memory_order_relaxed);
+    Bump(g_cp.dispatches, 1);
+}
+void AddBackoff() {
+    Bump(g_cp.backoffs, 1);
+}
+
+void NoteGpuWrite(u64 address) {
+    if (Enabled()) {
+        g_gpu_written.insert(address);
+    }
+}
+
+void WaitScope::Blocked() {
+    if (start_ns_ == 0 && Enabled()) {
+        start_ns_ = NowNs();
+    }
+}
+
+WaitScope::~WaitScope() {
+    if (start_ns_ == 0) {
+        return;
+    }
+    const u64 ns = NowNs() - start_ns_;
+    const bool gpu = g_gpu_written.contains(address_);
+    Bump(g_cp.waits, 1);
+    Bump(queue_ == WaitQueue::Gfx ? g_cp.wait_gfx_ns : g_cp.wait_asc_ns, ns);
+    Bump(gpu ? g_cp.wait_gpu_label_ns : g_cp.wait_cpu_label_ns, ns);
+    auto& s = g_wait_addresses[address_];
+    s.ns += ns;
+    ++s.count;
+    s.gpu_written = gpu;
+    (queue_ == WaitQueue::Gfx ? s.gfx : s.asc) = true;
+    const u64 frame = g_frames.load(std::memory_order_relaxed);
+    if (frame >= g_last_address_dump_frame + 600) {
+        DumpWaitAddresses(frame);
+    }
 }
 
 void OnGuestFrame() {
@@ -127,24 +226,31 @@ void OnGuestFrame() {
     }
     const u64 now = NowNs();
     std::scoped_lock lock{g_writer.mutex};
-    const double frame_ms =
-        g_writer.last_frame_ns ? static_cast<double>(now - g_writer.last_frame_ns) / 1e6 : 0.0;
-    g_writer.last_frame_ns = now;
-    const double sched_ms = g_writer.tsc_ticks_per_ns > 0
-                                ? static_cast<double>(Take(g_counters.sched_wait_ticks)) /
-                                      g_writer.tsc_ticks_per_ns / 1e6
-                                : 0.0;
-    std::fprintf(g_writer.file, "%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%.3f,%llu,%llu\n",
-                 static_cast<unsigned long long>(g_writer.frame++), QpcMs(), frame_ms,
-                 static_cast<double>(Take(g_counters.cp_busy_ns)) / 1e6,
-                 static_cast<double>(Take(g_counters.cp_idle_ns)) / 1e6, sched_ms,
-                 static_cast<double>(Take(g_counters.present_wait_ns)) / 1e6,
-                 static_cast<unsigned long long>(Take(g_counters.pipelines)),
-                 static_cast<double>(Take(g_counters.pipeline_ns)) / 1e6,
-                 static_cast<unsigned long long>(Take(g_counters.draws)),
-                 static_cast<unsigned long long>(Take(g_counters.dispatches)));
-    if ((g_writer.frame & 63) == 0) {
-        std::fflush(g_writer.file);
+    auto& w = g_writer;
+    const double frame_ms = w.last_frame_ns ? Ms(now - w.last_frame_ns) : 0.0;
+    w.last_frame_ns = now;
+    const double sched_ms =
+        w.tsc_ticks_per_ns > 0
+            ? static_cast<double>(Take(g_shared.sched_wait_ticks)) / w.tsc_ticks_per_ns / 1e6
+            : 0.0;
+    std::fprintf(w.file,
+                 "%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%.3f,%llu,%llu,%.3f,%.3f,%.3f,%.3f,%llu,%llu\n",
+                 static_cast<unsigned long long>(w.frame), QpcMs(), frame_ms,
+                 Ms(Take(g_shared.cp_busy_ns)), Ms(Take(g_shared.cp_idle_ns)), sched_ms,
+                 Ms(Take(g_shared.present_wait_ns)),
+                 static_cast<unsigned long long>(Take(g_shared.pipelines)),
+                 Ms(Take(g_shared.pipeline_ns)),
+                 static_cast<unsigned long long>(Delta(g_cp.draws, w.draws)),
+                 static_cast<unsigned long long>(Delta(g_cp.dispatches, w.dispatches)),
+                 Ms(Delta(g_cp.wait_gfx_ns, w.wait_gfx)), Ms(Delta(g_cp.wait_asc_ns, w.wait_asc)),
+                 Ms(Delta(g_cp.wait_gpu_label_ns, w.wait_gpu)),
+                 Ms(Delta(g_cp.wait_cpu_label_ns, w.wait_cpu)),
+                 static_cast<unsigned long long>(Delta(g_cp.waits, w.waits)),
+                 static_cast<unsigned long long>(Delta(g_cp.backoffs, w.backoffs)));
+    ++w.frame;
+    g_frames.store(w.frame, std::memory_order_relaxed);
+    if ((w.frame & 63) == 0) {
+        std::fflush(w.file);
     }
 }
 

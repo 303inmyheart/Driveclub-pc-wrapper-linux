@@ -274,6 +274,9 @@ private:
 
     struct GpuQueue {
         std::mutex m_access{};
+        // driveclub-pc: submits in `submits`, readable without m_access, so the scheduling loop
+        // can skip empty queues without locking them.
+        std::atomic<u32> pending{0};
         std::atomic<u32> dcb_buffer_offset;
         std::atomic<u32> ccb_buffer_offset;
         std::vector<u32> dcb_buffer;
