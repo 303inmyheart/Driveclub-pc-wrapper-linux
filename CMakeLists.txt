@@ -1340,6 +1340,8 @@ add_executable(shadps4
     src/sdl_window.cpp
     src/driveclub/launch_check.cpp
     src/driveclub/launch_check.h
+    src/driveclub/frame_profiler.cpp
+    src/driveclub/frame_profiler.h
 )
 
 # driveclub-pc: the runtime is shipped as Driveclub-PC.exe.

@@ -23,6 +23,7 @@
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/texture_cache/image.h"
+#include "driveclub/frame_profiler.h"
 
 #include <algorithm>
 #include <array>
@@ -1084,11 +1085,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     free_frame();
     if (!is_reusing_frame && is_game_frame) {
         DebugState.IncFlipFrameNum();
+        DriveclubPC::Profiler::OnGuestFrame();
     }
 }
 
 Frame* Presenter::GetRenderFrame() {
     // Wait for free presentation frames
+    const u64 wait_start = DriveclubPC::Profiler::Enabled() ? DriveclubPC::Profiler::NowNs() : 0;
     Frame* frame;
     {
         std::unique_lock lock{free_mutex};
@@ -1116,6 +1119,9 @@ Frame* Presenter::GetRenderFrame() {
         if (result == vk::Result::eTimeout) {
             continue;
         }
+    }
+    if (wait_start) {
+        DriveclubPC::Profiler::AddPresentWait(DriveclubPC::Profiler::NowNs() - wait_start);
     }
 
     if (frame->width != expected_frame_width || frame->height != expected_frame_height ||

@@ -13,6 +13,10 @@
 #include "core/file_sys/fs.h"
 #include "driveclub/launch_check.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace DriveclubPC {
 
 namespace {
@@ -105,9 +109,34 @@ void EnsureDefaultGameConfig() {
     if (std::filesystem::exists(path, ec)) {
         return;
     }
+    // Borderless fullscreen at the desktop resolution of the primary display; the game renders at
+    // its native 1920x1080 and the presenter scales it with FSR 1 + RCAS.
+    int width = 1920;
+    int height = 1080;
+#ifdef _WIN32
+    // Physical pixels of the primary display (GetSystemMetrics would be DPI-scaled here).
+    DEVMODEW mode{};
+    mode.dmSize = sizeof(mode);
+    if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmPelsWidth > 0 &&
+        mode.dmPelsHeight > 0) {
+        width = static_cast<int>(mode.dmPelsWidth);
+        height = static_cast<int>(mode.dmPelsHeight);
+    }
+#endif
     std::ofstream out(path);
-    out << "{\n  \"GPU\": {\n    \"readbacks_mode\": 2,\n    \"readback_offload\": true\n  }\n}\n";
-    LOG_INFO(Loader, "{}: wrote default Driveclub settings to {}", AppName, path.string());
+    out << fmt::format("{{\n  \"GPU\": {{\n"
+                       "    \"readbacks_mode\": 2,\n"
+                       "    \"readback_offload\": true,\n"
+                       "    \"fsr_enabled\": true,\n"
+                       "    \"rcas_enabled\": true,\n"
+                       "    \"full_screen\": true,\n"
+                       "    \"full_screen_mode\": \"Fullscreen (Borderless)\",\n"
+                       "    \"window_width\": {},\n"
+                       "    \"window_height\": {}\n"
+                       "  }}\n}}\n",
+                       width, height);
+    LOG_INFO(Loader, "{}: wrote default Driveclub settings to {} (borderless {}x{}, FSR 1)", AppName,
+             path.string(), width, height);
 }
 
 void ShowError(std::string_view message) {

@@ -12,6 +12,7 @@
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "driveclub/frame_profiler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Vulkan {
@@ -399,8 +400,12 @@ GraphicsPipeline::GraphicsPipeline(
         .layout = pipeline_layout,
     };
 
+    const u64 create_start = DriveclubPC::Profiler::Enabled() ? DriveclubPC::Profiler::NowNs() : 0;
     auto [pipeline_result, pipe] =
         device.createGraphicsPipelineUnique(pipeline_cache, pipeline_info);
+    if (create_start) {
+        DriveclubPC::Profiler::AddPipeline(DriveclubPC::Profiler::NowNs() - create_start);
+    }
     ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create graphics pipeline: {}",
                vk::to_string(pipeline_result));
     pipeline = std::move(pipe);

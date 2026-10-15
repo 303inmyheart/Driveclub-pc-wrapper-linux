@@ -7,6 +7,7 @@
 #include "video_core/renderer_vulkan/vk_compute_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "driveclub/frame_profiler.h"
 
 namespace Vulkan {
 
@@ -85,8 +86,12 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         .stage = shader_ci,
         .layout = pipeline_layout,
     };
+    const u64 create_start = DriveclubPC::Profiler::Enabled() ? DriveclubPC::Profiler::NowNs() : 0;
     auto [pipeline_result, pipe] =
         instance.GetDevice().createComputePipelineUnique(pipeline_cache, compute_pipeline_ci);
+    if (create_start) {
+        DriveclubPC::Profiler::AddPipeline(DriveclubPC::Profiler::NowNs() - create_start);
+    }
     ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create compute pipeline: {}",
                vk::to_string(pipeline_result));
     pipeline = std::move(pipe);

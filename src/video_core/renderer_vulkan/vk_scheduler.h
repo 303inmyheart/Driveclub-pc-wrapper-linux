@@ -17,6 +17,7 @@
 #include "video_core/amdgpu/regs_color.h"
 #include "video_core/amdgpu/regs_primitive.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
+#include "driveclub/frame_profiler.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 #include "vulkan/vulkan.hpp"
 
@@ -466,6 +467,9 @@ public:
         auto& w = wait_stats_[static_cast<size_t>(site)];
         ++w.count;
         w.ns += ns;
+        if (DriveclubPC::Profiler::Enabled()) {
+            DriveclubPC::Profiler::AddSchedWaitTicks(ns); // TSC ticks despite the name
+        }
     }
 
     /// Waits for the given tick, attributing any blocking to a call site.

@@ -20,6 +20,7 @@
 #include "video_core/buffer_cache/stream_copy_lane.h"
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "driveclub/frame_profiler.h"
 
 namespace AmdGpu {
 
@@ -94,6 +95,9 @@ static inline std::span<const u32> NextPacket(std::span<const u32> span, size_t 
 SHAD_FORCE_INLINE static void BeginDraw(Liverpool::PacketStats& stats, GfxStateStamp& stamp,
                                         const PM4Header* header) {
     ++stats.draws;
+    if (DriveclubPC::Profiler::Enabled()) {
+        DriveclubPC::Profiler::AddDraw();
+    }
     if (header->type3.predicate.Value() == PM4Predicate::PredEnable) {
         ++stats.predicated_draws;
     }
@@ -331,7 +335,10 @@ void Liverpool::Process(std::stop_token stoken) {
     // The only thread that spins on a contended tracker region lock.
     VideoCore::RegionLock::gpu_spin_rounds = EmulatorSettings.GetTrackerLockSpinRounds();
 
+    // driveclub-pc: frame profiler (DCPC_PROFILE=1) splits this thread's time into idle and busy.
+    const bool profile = DriveclubPC::Profiler::Enabled();
     while (!stoken.stop_requested()) {
+        const u64 idle_start = profile ? DriveclubPC::Profiler::NowNs() : 0;
         {
             std::unique_lock lk{submit_mutex};
             Common::CondvarWait(submit_cv, lk, stoken,
@@ -339,6 +346,10 @@ void Liverpool::Process(std::stop_token stoken) {
         }
         if (stoken.stop_requested()) {
             break;
+        }
+        const u64 busy_start = profile ? DriveclubPC::Profiler::NowNs() : 0;
+        if (profile) {
+            DriveclubPC::Profiler::AddCpIdle(busy_start - idle_start);
         }
 
         VideoCore::StartCapture();
@@ -389,6 +400,9 @@ void Liverpool::Process(std::stop_token stoken) {
         }
 
         Platform::IrqC::Instance()->Signal(Platform::InterruptId::GpuIdle);
+        if (profile) {
+            DriveclubPC::Profiler::AddCpBusy(DriveclubPC::Profiler::NowNs() - busy_start);
+        }
     }
 }
 
@@ -935,6 +949,9 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
         }
         case PM4ItOpcode::DispatchDirect: {
             ++packet_stats.dispatches;
+            if (DriveclubPC::Profiler::Enabled()) {
+                DriveclubPC::Profiler::AddDispatch();
+            }
             gfx_stamp.FlushAtDraw();
             const auto* dispatch_direct = reinterpret_cast<const PM4CmdDispatchDirect*>(header);
             auto& cs_program = GetCsRegs();
