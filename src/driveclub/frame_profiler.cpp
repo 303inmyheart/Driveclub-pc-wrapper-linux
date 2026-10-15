@@ -56,6 +56,7 @@ struct CpCounters {
 SharedCounters g_shared;
 CpCounters g_cp;
 std::atomic<int> g_enabled{-1}; // -1 = not decided yet
+std::atomic<u32> g_phase{0};
 std::atomic<u64> g_frames{0};
 std::array<std::atomic<u64>, MaxQueues> g_last_submit_ns{};
 
@@ -110,7 +111,7 @@ bool Decide() {
                          "frame,qpc_ms,frame_ms,cp_busy_ms,cp_idle_ms,sched_wait_ms,"
                          "present_wait_ms,pipelines,pipeline_ms,draws,dispatches,wait_gfx_ms,"
                          "wait_asc_ms,wait_gpu_label_ms,wait_cpu_label_ms,waits,backoffs,"
-                         "gfx_wait_late_ms,gfx_wait_queued_ms\n");
+                         "gfx_wait_late_ms,gfx_wait_queued_ms,phase\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
             LOG_INFO(Debug, "Driveclub-PC frame profiler writing {}", path.string());
         } else {
@@ -237,6 +238,10 @@ void AddBackoff() {
     Bump(g_cp.backoffs, 1);
 }
 
+void SetPhase(u32 phase) {
+    g_phase.store(phase, std::memory_order_relaxed);
+}
+
 void NoteGpuWrite(u64 address, u32 queue) {
     if (Enabled()) {
         auto& w = g_label_writer[address];
@@ -310,7 +315,8 @@ void OnGuestFrame() {
             : 0.0;
     std::fprintf(
         w.file,
-        "%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%.3f,%llu,%llu,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%.3f,%.3f\n",
+        "%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%.3f,%llu,%llu,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%.3f,%.3f,"
+        "%u\n",
         static_cast<unsigned long long>(w.frame), QpcMs(), frame_ms, Ms(Take(g_shared.cp_busy_ns)),
         Ms(Take(g_shared.cp_idle_ns)), sched_ms, Ms(Take(g_shared.present_wait_ns)),
         static_cast<unsigned long long>(Take(g_shared.pipelines)), Ms(Take(g_shared.pipeline_ns)),
@@ -320,7 +326,8 @@ void OnGuestFrame() {
         Ms(Delta(g_cp.wait_gpu_label_ns, w.wait_gpu)), Ms(Delta(g_cp.wait_cpu_label_ns, w.wait_cpu)),
         static_cast<unsigned long long>(Delta(g_cp.waits, w.waits)),
         static_cast<unsigned long long>(Delta(g_cp.backoffs, w.backoffs)),
-        Ms(Delta(g_cp.gfx_late_ns, w.gfx_late)), Ms(Delta(g_cp.gfx_queued_ns, w.gfx_queued)));
+        Ms(Delta(g_cp.gfx_late_ns, w.gfx_late)), Ms(Delta(g_cp.gfx_queued_ns, w.gfx_queued)),
+        g_phase.load(std::memory_order_relaxed));
     ++w.frame;
     g_frames.store(w.frame, std::memory_order_relaxed);
     if ((w.frame & 63) == 0) {

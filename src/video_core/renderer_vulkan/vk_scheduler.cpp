@@ -6,6 +6,7 @@
 #include "common/rdtsc.h"
 #include "common/thread.h"
 #include "core/emulator_settings.h"
+#include "driveclub/deferred_recording.h"
 #include "imgui/renderer/texture_manager.h"
 #include "video_core/buffer_cache/stream_copy_lane.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -115,7 +116,21 @@ vk::CommandBuffer Scheduler::UploadCommandBuffer() {
     };
     upload_cmdbuf = command_pool.Commit();
     Check(upload_cmdbuf.begin(begin_info));
+    PublishDeferredTargets();
     return upload_cmdbuf;
+}
+
+void Scheduler::EnableDeferredRecording() {
+    deferred_recording = DriveclubPC::DeferredRecording::Enabled();
+    PublishDeferredTargets();
+}
+
+void Scheduler::PublishDeferredTargets() const {
+    if (!deferred_recording || sessions.empty()) {
+        return;
+    }
+    const auto& session = sessions.back();
+    DriveclubPC::DeferredRecording::SetTargets(session.primary, session.upload);
 }
 
 void Scheduler::Flush(SubmitInfo& info) {
@@ -194,6 +209,7 @@ void Scheduler::BeginSession() {
     };
     session.primary = command_pool.Commit();
     Check(session.primary.begin(begin_info));
+    PublishDeferredTargets();
 
     // Invalidate dynamic state so it gets applied to the new command buffer.
     dynamic_state.Invalidate();

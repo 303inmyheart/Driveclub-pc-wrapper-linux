@@ -47,6 +47,9 @@ void AddDraw();
 void AddDispatch();
 void AddBackoff();
 
+// A/B phase written with every frame (column "phase"), for features that alternate at run time.
+void SetPhase(u32 phase);
+
 // Called by the command processor for every address a GPU queue writes (fences, labels).
 // queue: 0 = graphics, otherwise the Gnm virtual compute queue id.
 void NoteGpuWrite(u64 address, u32 queue);

@@ -574,8 +574,13 @@ public:
 
     static std::mutex submit_mutex;
 
+    /// driveclub-pc: this scheduler's command buffers are recorded on the deferred recording
+    /// thread when it is enabled (DCPC_DEFERRED_RECORDING=1, driveclub/deferred_recording.h).
+    void EnableDeferredRecording();
+
 private:
     void EndSession();
+    void PublishDeferredTargets() const;
 
     void SubmitExecution(SubmitInfo& info);
 
@@ -613,6 +618,7 @@ private:
     std::jthread priority_pending_ops_thread;
     RenderState render_state;
     bool is_rendering = false;
+    bool deferred_recording = false;
     std::array<WaitStat, static_cast<size_t>(WaitSite::Count)> wait_stats_{};
     u64 rs_calls_{};
     u64 rs_restarts_{};

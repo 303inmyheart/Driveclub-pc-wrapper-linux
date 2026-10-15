@@ -99,6 +99,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
         liverpool->BindRasterizer(this);
     }
     memory->SetRasterizer(this);
+    scheduler.EnableDeferredRecording();
     auto& skipcache = Skipcache::Framework::Instance();
     const u32 sc_mode = EmulatorSettings.GetAdaptiveSkipCachesMode();
     const bool sc_enabled = sc_mode != AdaptiveSkipCachesMode::SkipCachesDisabled;

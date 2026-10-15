@@ -23,6 +23,7 @@
 #include "video_core/buffer_cache/stream_copy_lane.h"
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "driveclub/deferred_recording.h"
 #include "driveclub/frame_profiler.h"
 
 namespace AmdGpu {
@@ -67,6 +68,7 @@ static thread_local bool t_task_blocked = false;
         while (!(condition)) {                                                                     \
             t_task_blocked = true;                                                                 \
             dcpc_wait.Blocked();                                                                   \
+            DriveclubPC::DeferredRecording::Kick();                                                \
             yield_stmt;                                                                            \
         }                                                                                          \
     }
