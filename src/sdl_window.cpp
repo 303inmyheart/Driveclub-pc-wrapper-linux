@@ -259,7 +259,17 @@ void WindowSDL::WaitEvent() {
         OnGamepadEvent(&event);
         break;
     case SDL_EVENT_QUIT:
+        // driveclub-pc: record why the runtime stops (window close, signal, overlay or IPC).
+        LOG_INFO(Frontend, "Quit event received (timestamp {} ns)", event.quit.timestamp);
         is_open = false;
+        break;
+    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+        LOG_INFO(Frontend, "Window close requested");
+        break;
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+        LOG_INFO(Frontend, "Window focus {}",
+                 event.type == SDL_EVENT_WINDOW_FOCUS_LOST ? "lost" : "gained");
         break;
     case SDL_EVENT_QUIT_DIALOG:
         Overlay::ToggleQuitWindow();

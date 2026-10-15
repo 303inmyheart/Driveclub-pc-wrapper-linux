@@ -3,6 +3,7 @@
 
 #include <memory>
 #include "common/assert.h"
+#include "driveclub/image_recycler.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -89,7 +90,11 @@ static vk::FormatFeatureFlags2 FormatFeatureFlags(const vk::ImageUsageFlags usag
 
 UniqueImage::~UniqueImage() {
     if (image) {
-        vmaDestroyImage(allocator, image, allocation);
+        // driveclub-pc: keep the image and its memory for an identical re-create.
+        const VkImageCreateInfo ci = static_cast<VkImageCreateInfo>(image_ci);
+        if (!DriveclubPC::ImageRecycler::Put(ci, allocator, image, allocation, size_bytes)) {
+            vmaDestroyImage(allocator, image, allocation);
+        }
     }
 }
 
@@ -115,6 +120,13 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
 
     const VkImageCreateInfo image_ci_unsafe = static_cast<VkImageCreateInfo>(image_ci);
     VkImage unsafe_image{};
+    // driveclub-pc: reuse a released image with exactly this create info (contents undefined,
+    // as for a new image; the texture cache treats it as freshly created).
+    if (DriveclubPC::ImageRecycler::Take(image_ci_unsafe, allocator, unsafe_image, allocation,
+                                          size_bytes)) {
+        image = vk::Image{unsafe_image};
+        return;
+    }
     VmaAllocationInfo alloc_info{};
     VkResult result = vmaCreateImage(allocator, &image_ci_unsafe, &alloc_ci, &unsafe_image,
                                      &allocation, &alloc_info);

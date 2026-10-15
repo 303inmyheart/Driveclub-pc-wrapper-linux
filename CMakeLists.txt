@@ -1342,6 +1342,8 @@ add_executable(shadps4
     src/driveclub/launch_check.h
     src/driveclub/frame_profiler.cpp
     src/driveclub/frame_profiler.h
+    src/driveclub/image_recycler.cpp
+    src/driveclub/image_recycler.h
 )
 
 # driveclub-pc: the runtime is shipped as Driveclub-PC.exe.
