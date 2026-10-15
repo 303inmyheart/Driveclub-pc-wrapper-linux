@@ -23,6 +23,7 @@
 #include "core/file_sys/fs.h"
 #include "core/ipc/ipc.h"
 #include "core/user_settings.h"
+#include "driveclub/launch_check.h"
 #include "emulator.h"
 #include "imgui/big_picture/big_picture.h"
 
@@ -113,12 +114,11 @@ int main(int argc, char* argv[]) {
 
     // ---- No-args behavior ----
     if (argc == 1) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "shadPS4",
-                                 "This is a CLI application. Please use the '-b' flag for Big "
-                                 "Picture mode, or QTLauncher for a standalone GUI:\n"
-                                 "https://github.com/shadps4-emu/shadps4-qtlauncher/releases",
+        // driveclub-pc: one game, one argument.
+        const auto usage = DriveclubPC::UsageText();
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Driveclub-PC", usage.c_str(),
                                  nullptr);
-        std::cout << app.help();
+        std::cout << usage << "\n\n" << app.help();
         return -1;
     }
 
@@ -254,10 +254,24 @@ int main(int argc, char* argv[]) {
             }
         }
         if (!found) {
-            LOG_ERROR(Debug, "Game ID or file path not found: {}", *gamePath);
+            DriveclubPC::ShowError(fmt::format("Game folder not found:\n{}", *gamePath));
             return 1;
         }
     }
+
+    // driveclub-pc: validate the game and firmware modules before the core starts.
+    std::string launch_error;
+    const auto driveclub_eboot = DriveclubPC::ResolveAndValidateGame(ebootPath, launch_error);
+    if (!driveclub_eboot) {
+        DriveclubPC::ShowError(launch_error);
+        return 1;
+    }
+    if (!DriveclubPC::ValidateSysModules(launch_error)) {
+        DriveclubPC::ShowError(launch_error);
+        return 1;
+    }
+    DriveclubPC::EnsureDefaultGameConfig();
+    ebootPath = *driveclub_eboot;
 
     auto* emulator = Common::Singleton<Core::Emulator>::Instance();
     emulator->executableName = argv[0];

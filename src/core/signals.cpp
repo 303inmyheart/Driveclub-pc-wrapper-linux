@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <fmt/format.h>
 #include "common/arch.h"
 #include "common/assert.h"
@@ -56,6 +57,17 @@ static LONG WINAPI SignalHandler(EXCEPTION_POINTERS* pExp) noexcept {
         guest_info._si_signo = POSIX_SIGSEGV;
         guest_info._si_code = POSIX_SEGV_MAPERR;
         static_protection_exception = true; // Windows static guest red-zone protection
+        // driveclub-pc: report faults at red-zone sites static patching could not protect; the
+        // kernel has already written the exception frame below RSP by now.
+        if (use_static_windows_guest_red_zone_protection &&
+            WindowsGuestRedZoneProtection::IsUnprotectedSite(reinterpret_cast<uintptr_t>(address))) {
+            static std::atomic<u32> reported{0};
+            if (reported.fetch_add(1, std::memory_order_relaxed) < 64) {
+                LOG_WARNING(Core, "Fault at unprotected red-zone site {} (access {:#x}): red-zone "
+                                  "data of this function may have been overwritten",
+                            address, pExp->ExceptionRecord->ExceptionInformation[1]);
+            }
+        }
         handled = signals->DispatchAccessViolation(
             pExp, reinterpret_cast<void*>(pExp->ExceptionRecord->ExceptionInformation[1]));
         break;

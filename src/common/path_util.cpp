@@ -88,6 +88,18 @@ static std::optional<std::filesystem::path> GetBundleParentDirectory() {
 static auto UserPaths = [] {
     // Try the portable user directory first.
     auto user_dir = std::filesystem::current_path() / PORTABLE_DIR;
+#ifdef _WIN32
+    // driveclub-pc: the user folder always sits next to the executable, so a double-clicked or
+    // shortcut-started Driveclub-PC.exe finds its settings and saves regardless of the working dir.
+    {
+        wchar_t exe_path[MAX_PATH];
+        const DWORD len = GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+        if (len > 0 && len < MAX_PATH) {
+            user_dir = std::filesystem::path(exe_path).parent_path() / PORTABLE_DIR;
+            std::filesystem::create_directories(user_dir);
+        }
+    }
+#endif
     if (!std::filesystem::exists(user_dir)) {
         // If it doesn't exist, use the standard path for the platform instead.
         // NOTE: On Windows we currently just create the portable directory instead.

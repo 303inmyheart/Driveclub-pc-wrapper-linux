@@ -22,6 +22,11 @@ void SetActiveMode(WindowsGuestRedZoneProtectionMode mode) noexcept;
 WindowsGuestRedZoneProtectionMode GetActiveMode() noexcept;
 bool IsStaticPatchingEnabled() noexcept;
 
+// driveclub-pc: red-zone sites static patching had to leave unprotected. A fault at one of them may
+// have overwritten live red-zone data; the signal handler reports such faults.
+void RecordUnprotectedSite(uintptr_t address);
+bool IsUnprotectedSite(uintptr_t address);
+
 } // namespace Core::WindowsGuestRedZoneProtection
 
 // ============================================================================

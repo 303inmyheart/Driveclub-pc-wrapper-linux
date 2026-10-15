@@ -12,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <shared_mutex>
 #include <unordered_set>
 #include <vector>
 #include <Zydis/Zydis.h>
@@ -1144,6 +1145,21 @@ bool IsStaticPatchingEnabled() noexcept {
     return GetActiveMode() == WindowsGuestRedZoneProtectionMode::StaticPatching;
 }
 
+namespace {
+std::shared_mutex unprotected_sites_mutex;
+std::unordered_set<uintptr_t> unprotected_sites;
+} // namespace
+
+void RecordUnprotectedSite(uintptr_t address) {
+    std::unique_lock lock{unprotected_sites_mutex};
+    unprotected_sites.insert(address);
+}
+
+bool IsUnprotectedSite(uintptr_t address) {
+    std::shared_lock lock{unprotected_sites_mutex};
+    return unprotected_sites.contains(address);
+}
+
 } // namespace WindowsGuestRedZoneProtection
 
 namespace {
@@ -2097,6 +2113,10 @@ static RedZonePatchResult PatchSegmentStatically(u64 segment_addr, u64 segment_s
             }
             if (rewrite.protect_red_zone) {
                 ++result.unrelocatable_memory_instruction_count;
+                // driveclub-pc: name every red-zone site left unprotected, for offline review.
+                LOG_INFO(Core_Linker, "Red-zone site not protected: segment+{:#x} (function+{:#x})",
+                         site - segment_addr, site - function_start);
+                WindowsGuestRedZoneProtection::RecordUnprotectedSite(site);
             }
         };
         const auto overlaps_patched_span = [&patched_spans](uintptr_t start, uintptr_t end) {
