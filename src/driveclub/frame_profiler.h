@@ -17,12 +17,17 @@
 //   draws, dispatches     guest draws and compute dispatches decoded
 //   wait_gfx_ms, wait_asc_ms  wall time graphics / compute queues spent blocked in WaitRegMem,
 //                         MemSemaphore or Rewind (from the first failed test to success)
-//   wait_gpu_label_ms     part of those waits on addresses a GPU queue writes (EOP, EOS,
-//                         ReleaseMem, WriteData): waiting on another emulated queue
-//   wait_cpu_label_ms     part on addresses no GPU queue wrote: waiting on the game's CPU threads
+//   wait_gpu_label_ms     part of those waits that ended after an emulated GPU queue wrote the
+//                         awaited address (EOP, EOS, ReleaseMem, WriteData) during the wait
+//   wait_cpu_label_ms     part that ended without any GPU-queue write to it: the value was written
+//                         by the game's CPU code
 //   waits                 number of blocked waits that completed in the frame
 //   backoffs              command processor backoff steps taken while every task was blocked
-// Every 600 frames the command processor also logs the wait addresses with the most time.
+//   gfx_wait_late_ms      graphics wait time where the queue that writes the awaited label received
+//                         a new submission from the game *after* the wait began (game submitted late)
+//   gfx_wait_queued_ms    graphics wait time where it did not (the work was already queued)
+// Every 600 frames the command processor also logs the wait addresses with the most time and which
+// game threads submitted to which queue.
 
 #pragma once
 
@@ -43,7 +48,11 @@ void AddDispatch();
 void AddBackoff();
 
 // Called by the command processor for every address a GPU queue writes (fences, labels).
-void NoteGpuWrite(u64 address);
+// queue: 0 = graphics, otherwise the Gnm virtual compute queue id.
+void NoteGpuWrite(u64 address, u32 queue);
+
+// Called on the game's thread when it submits work to a queue (same numbering).
+void NoteSubmit(u32 queue);
 
 enum class WaitQueue : u8 { Gfx, Asc };
 
@@ -61,6 +70,7 @@ private:
     WaitQueue queue_;
     u64 address_;
     u64 start_ns_ = 0;
+    u64 gpu_writes_at_start_ = 0;
 };
 
 // Called by the presenter for every presented guest frame.

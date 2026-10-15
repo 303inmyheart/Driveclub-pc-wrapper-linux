@@ -1098,7 +1098,7 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
         }
         case PM4ItOpcode::EventWriteEos: {
             const auto* event_eos = reinterpret_cast<const PM4CmdEventWriteEos*>(header);
-            DriveclubPC::Profiler::NoteGpuWrite(event_eos->Address<u64>());
+            DriveclubPC::Profiler::NoteGpuWrite(event_eos->Address<u64>(), GfxQueueId);
             FenceDrainAndDownload(rasterizer);
             event_eos->SignalFence([](void* address, u64 data, u32 num_bytes) {
                 auto* memory = Core::Memory::Instance();
@@ -1116,7 +1116,8 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
         }
         case PM4ItOpcode::EventWriteEop: {
             const auto* event_eop = reinterpret_cast<const PM4CmdEventWriteEop*>(header);
-            DriveclubPC::Profiler::NoteGpuWrite(reinterpret_cast<u64>(event_eop->Address<u8>()));
+            DriveclubPC::Profiler::NoteGpuWrite(reinterpret_cast<u64>(event_eop->Address<u8>()),
+                                                GfxQueueId);
             FenceDrainAndDownload(rasterizer);
             event_eop->SignalFence(
                 [](void* address, u64 data, u32 num_bytes) {
@@ -1164,7 +1165,7 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
         }
         case PM4ItOpcode::WriteData: {
             const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(header);
-            DriveclubPC::Profiler::NoteGpuWrite(write_data->Address<u64>());
+            DriveclubPC::Profiler::NoteGpuWrite(write_data->Address<u64>(), GfxQueueId);
             ASSERT(write_data->dst_sel.Value() == 2 || write_data->dst_sel.Value() == 5);
             const u32 data_size = (header->type3.count.Value() - 2) * 4;
             if (!write_data->wr_one_addr.Value()) {
@@ -1542,7 +1543,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
         case PM4ItOpcode::WriteData: {
             const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(header);
-            DriveclubPC::Profiler::NoteGpuWrite(write_data->Address<u64>());
+            DriveclubPC::Profiler::NoteGpuWrite(write_data->Address<u64>(), vqid + 1);
             ASSERT(write_data->dst_sel.Value() == 2 || write_data->dst_sel.Value() == 5);
             const u32 data_size = (header->type3.count.Value() - 2) * 4;
             if (!write_data->wr_one_addr.Value()) {
@@ -1574,7 +1575,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
         case PM4ItOpcode::ReleaseMem: {
             const auto* release_mem = reinterpret_cast<const PM4CmdReleaseMem*>(header);
-            DriveclubPC::Profiler::NoteGpuWrite(release_mem->Address<u64>());
+            DriveclubPC::Profiler::NoteGpuWrite(release_mem->Address<u64>(), vqid + 1);
             // The compute queue has no packet-run guard, so its dispatch
             // marks reach a drain here, at its waits and at every submit.
             FenceDrainAndDownload(rasterizer);
@@ -1648,6 +1649,7 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
     }
 
     auto task = ProcessGraphics(dcb, ccb);
+    DriveclubPC::Profiler::NoteSubmit(GfxQueueId);
     {
         std::scoped_lock lock{queue.m_access};
         queue.submits.emplace(task.handle);
@@ -1665,6 +1667,7 @@ void Liverpool::SubmitAsc(u32 gnm_vqid, std::span<const u32> acb) {
 
     const auto vqid = gnm_vqid - 1;
     const auto& task = ProcessCompute(acb, vqid);
+    DriveclubPC::Profiler::NoteSubmit(gnm_vqid);
     {
         std::scoped_lock lock{queue.m_access};
         queue.submits.emplace(task.handle);
