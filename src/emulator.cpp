@@ -620,11 +620,14 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     }
 
 #ifdef _WIN32
-    // Enable red-zone patching if the setting is enabled
-    if (EmulatorSettings.IsRedZonePatchingEnabled()) {
-        WindowsGuestRedZoneProtection::SetActiveMode(
-            WindowsGuestRedZoneProtectionMode::StaticPatching);
+    // driveclub-pc: red-zone protection is always on. Driveclub keeps live locals below RSP
+    // (e.g. eboot+0x64D980) and a VEH-handled fault there lets Windows overwrite them; see
+    // docs/implementation-plan.md "Baseline findings". The setting can no longer disable it.
+    if (!EmulatorSettings.IsRedZonePatchingEnabled()) {
+        LOG_INFO(Loader, "redzone_patches=false in config is ignored: red-zone protection is "
+                         "required for Driveclub on Windows");
     }
+    WindowsGuestRedZoneProtection::SetActiveMode(WindowsGuestRedZoneProtectionMode::StaticPatching);
 #endif
 
     // Create stdin/stdout/stderr

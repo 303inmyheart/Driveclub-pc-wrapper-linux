@@ -311,7 +311,8 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
                             name);
             }
         } else if (red_zone_protection) {
-            LOG_DEBUG(
+            // driveclub-pc: Info instead of Debug, so every run records red-zone coverage.
+            LOG_INFO(
                 Core_Linker,
                 "Windows guest red-zone static patching for {}: {} functions, {} instructions, "
                 "{} red-zone functions, {}/{} memory instructions patched "

@@ -4,10 +4,12 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <xbyak/xbyak.h>
 
+#include "common/assert.h"
 #include "common/logging/log.h"
 #include "core/aerolib/aerolib.h"
 #include "core/aerolib/stubs.h"
@@ -28,16 +30,52 @@ struct StubEntry {
 static std::vector<StubEntry> g_stub_entries;
 static std::mutex g_stub_mutex;
 
+// driveclub-pc: strict import policy. Calling a function that has no implementation stops the
+// runtime with its name, unless the function is listed here with a defined result and a reason.
+// The list holds only functions Driveclub 1.28 was observed to call (logs of 2026-10-15).
+struct AllowedStub {
+    std::string_view name;
+    u64 result;
+    std::string_view reason;
+};
+constexpr std::string_view NpInGameMessageReason =
+    "PSN in-game messaging; the Driveclub servers are offline. 0 is the result every measured "
+    "baseline run received";
+constexpr AllowedStub AllowedStubs[] = {
+    {"sceNpInGameMessageInitialize", 0, NpInGameMessageReason},
+    {"sceNpInGameMessageCreateHandle", 0, NpInGameMessageReason},
+    {"sceNpInGameMessagePrepare", 0, NpInGameMessageReason},
+    {"sceNpInGameMessageSendData", 0, NpInGameMessageReason},
+    {"sceNpInGameMessageDeleteHandle", 0, NpInGameMessageReason},
+    {"sceNpInGameMessageTerminate", 0, NpInGameMessageReason},
+};
+
+static const AllowedStub* FindAllowedStub(const NidEntry* nid) {
+    if (!nid) {
+        return nullptr;
+    }
+    for (const auto& allowed : AllowedStubs) {
+        if (allowed.name == nid->name) {
+            return &allowed;
+        }
+    }
+    return nullptr;
+}
+
 static u64 PS4_SYSV_ABI CommonStub(u64 index) {
     const auto& e = g_stub_entries[index];
-    if (e.nid) {
-        LOG_ERROR(Core, "Stub: {} (nid: {}) called, returning zero to {}", e.nid->name, e.nid->nid,
-                  __builtin_return_address(0));
-    } else {
-        LOG_ERROR(Core, "Stub: Unknown (nid: {}) called, returning zero to {}", e.nid_unknown,
-                  __builtin_return_address(0));
+    if (const auto* allowed = FindAllowedStub(e.nid)) {
+        LOG_INFO(Core, "Unimplemented {} called, returning {:#x} (allowed: {})", e.nid->name,
+                 allowed->result, allowed->reason);
+        return allowed->result;
     }
-    return 0;
+    if (e.nid) {
+        UNREACHABLE_MSG("Unimplemented PS4 function called: {} (nid: {}), return address {}. "
+                        "Implement it or add it to AllowedStubs with a justified result.",
+                        e.nid->name, e.nid->nid, __builtin_return_address(0));
+    }
+    UNREACHABLE_MSG("Unimplemented PS4 function called: unknown nid {}, return address {}",
+                    e.nid_unknown, __builtin_return_address(0));
 }
 
 u64 GetStub(const char* nid) {

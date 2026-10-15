@@ -120,6 +120,17 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/externals/cmake-modules/GetGitRevisionDescr
 get_git_head_revision(GIT_REF_SPEC GIT_REV)
 git_describe(GIT_DESC --always --long --dirty)
 git_branch_name(GIT_BRANCH)
+# driveclub-pc: GetGitRevisionDescription cannot follow a git worktree whose .git file holds an
+# absolute gitdir; ask git directly so every build records its revision.
+if(NOT GIT_REV OR GIT_REV MATCHES "NOTFOUND")
+    execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                    OUTPUT_VARIABLE GIT_REV OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    execute_process(COMMAND git describe --always --long --dirty
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                    OUTPUT_VARIABLE GIT_DESC OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    execute_process(COMMAND git rev-parse --abbrev-ref HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                    OUTPUT_VARIABLE GIT_BRANCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
 string(TIMESTAMP BUILD_DATE "%Y-%m-%d %H:%M:%S")
 
 message("start git things")
