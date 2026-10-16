@@ -69,6 +69,9 @@ struct CostCounters {
 std::array<CostCounters, static_cast<size_t>(Cost::Count)> g_costs;
 thread_local bool g_command_processor = false;
 CpCounters g_cp;
+std::array<std::atomic<u64>, static_cast<size_t>(Event::Count)> g_events{};
+std::atomic<u64> g_gpu_ns{}, g_gpu_max_ns{}, g_gpu_batches{};
+std::array<std::atomic<u64>, static_cast<size_t>(MaxStat::Count)> g_max{};
 std::atomic<int> g_enabled{-1}; // -1 = not decided yet
 std::atomic<u32> g_phase{0};
 
@@ -153,7 +156,10 @@ bool Decide() {
             std::fprintf(g_writer.file,
                          ",template_updates,descriptor_pushes,descriptor_writes,"
                          "descriptor_elements,descriptor_gap_fills,empty_queue_skips,"
-                         "vk_cp_calls,vk_cp_ms,vk_other_ms,main_hle_ms,main_fault_ms\n");
+                         "vk_cp_calls,vk_cp_ms,vk_other_ms,main_hle_ms,main_fault_ms,"
+                         "resident_binds,resident_kb,sparse_submits,image_creates,image_deletes,"
+                         "image_uploads,image_upload_kb,file_reads,file_read_kb,gpu_ms,gpu_max_ms,"
+                         "gpu_batches,submit_delay_max_ms,present_hold_max_ms\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
             if (const char* at = std::getenv("DCPC_TRACE_AT")) {
                 g_trace_at_s = std::atof(at);
@@ -262,6 +268,30 @@ u64 NowNs() {
 
 void MarkCommandProcessorThread() {
     g_command_processor = true;
+}
+
+void AddEvent(Event event, u64 value) {
+    if (Enabled()) {
+        g_events[static_cast<size_t>(event)].fetch_add(value, std::memory_order_relaxed);
+    }
+}
+
+namespace {
+void StoreMax(std::atomic<u64>& target, u64 ns) {
+    u64 max = target.load(std::memory_order_relaxed);
+    while (ns > max && !target.compare_exchange_weak(max, ns, std::memory_order_relaxed)) {
+    }
+}
+} // namespace
+
+void AddGpuBatch(u64 ns) {
+    g_gpu_ns.fetch_add(ns, std::memory_order_relaxed);
+    g_gpu_batches.fetch_add(1, std::memory_order_relaxed);
+    StoreMax(g_gpu_max_ns, ns);
+}
+
+void AddMax(MaxStat stat, u64 ns) {
+    StoreMax(g_max[static_cast<size_t>(stat)], ns);
 }
 
 CostScope::CostScope(Cost cost) : cost{cost}, start{Enabled() ? NowNs() : 0} {}
@@ -542,7 +572,7 @@ void OnGuestFrame() {
     double main_hle_ms = 0, main_fault_ms = 0;
     GuestStats::TakeFrame(main_hle_ms, main_fault_ms);
     std::fprintf(
-        w.file, ",%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.3f,%.3f,%.3f,%.3f\n",
+        w.file, ",%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.3f,%.3f,%.3f,%.3f",
         static_cast<unsigned long long>(Delta(g_cp.template_updates, w.template_updates)),
         static_cast<unsigned long long>(Delta(g_cp.descriptor_pushes, w.descriptor_pushes)),
         static_cast<unsigned long long>(Delta(g_cp.descriptor_writes, w.descriptor_writes)),
@@ -551,6 +581,15 @@ void OnGuestFrame() {
         static_cast<unsigned long long>(Delta(g_cp.empty_queue_skips, w.empty_queue_skips)),
         static_cast<unsigned long long>(vk_cp_calls), vk_cp_ms, vk_other_ms, main_hle_ms,
         main_fault_ms);
+    for (auto& e : g_events) {
+        std::fprintf(w.file, ",%llu", static_cast<unsigned long long>(Take(e)));
+    }
+    std::fprintf(w.file, ",%.3f,%.3f,%llu", Ms(Take(g_gpu_ns)), Ms(Take(g_gpu_max_ns)),
+                 static_cast<unsigned long long>(Take(g_gpu_batches)));
+    for (auto& m : g_max) {
+        std::fprintf(w.file, ",%.3f", Ms(Take(m)));
+    }
+    std::fprintf(w.file, "\n");
     ++w.frame;
     g_frames.store(w.frame, std::memory_order_relaxed);
     if ((w.frame & 63) == 0) {

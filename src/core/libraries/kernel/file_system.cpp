@@ -20,6 +20,7 @@
 #include "common/logging/log.h"
 #include "common/scope_exit.h"
 #include "common/singleton.h"
+#include "driveclub/frame_profiler.h"
 #include "core/file_sys/devices/console_device.h"
 #include "core/file_sys/devices/deci_tty_device.h"
 #include "core/file_sys/devices/logger.h"
@@ -376,6 +377,8 @@ s64 ReadFile(Core::FileSys::File* file, void* buf, u64 nbytes) {
         return bytes;
     }
     std::memcpy(buf, file_buf.data(), bytes);
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::FileReads);
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::FileReadKb, static_cast<u64>(bytes) >> 10);
     return bytes;
 }
 

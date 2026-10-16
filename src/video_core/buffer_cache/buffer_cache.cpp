@@ -766,6 +766,8 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         .memoryTypeIndex = arena_memory_type_index,
     };
     const auto device_memory = Vulkan::Check(instance.GetDevice().allocateMemory(alloc_info));
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ResidentBinds);
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ResidentKb, alloc_info.allocationSize >> 10);
 
     boost::container::small_vector<vk::BufferCopy, 8> copies;
     const auto staging =
@@ -924,6 +926,7 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     };
 
     info.AddWait(signal_sema, signal_tick);
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::SparseSubmits);
     auto submit_result = instance.GetGraphicsQueue().bindSparse(sparse_info);
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 

@@ -13,6 +13,7 @@
 #include "common/debug.h"
 #include "common/div_ceil.h"
 #include "common/rdtsc.h"
+#include "driveclub/frame_profiler.h"
 #include "common/scope_exit.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
@@ -410,6 +411,7 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         new_info.resources = std::max(requested_info.resources, cache_image.info.resources);
         new_info.UpdateSize();
         const auto new_image_id = slot_images.Insert(instance, runtime, slot_image_views, new_info);
+        DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageCreates);
         RegisterImage(new_image_id);
 
         // Inherit image usage
@@ -671,6 +673,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 
 ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
     const auto new_image_id = slot_images.Insert(instance, runtime, slot_image_views, info);
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageCreates);
     RegisterImage(new_image_id);
 
     auto& src_image = slot_images[image_id];
@@ -1138,6 +1141,7 @@ ImageId TextureCache::FindImageSlow(ImageDesc& desc, bool exact_fmt, ImageId ima
     // Create and register a new image
     if (!image_id) {
         image_id = slot_images.Insert(instance, runtime, slot_image_views, info);
+        DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageCreates);
         RegisterImage(image_id);
     }
     return image_id;
@@ -1414,6 +1418,7 @@ void TextureCache::AssociateStencil(ImageId depth_id, const ImageInfo& depth_inf
         info.guest_size = depth_info.stencil_size;
         info.size = depth_info.size;
         stencil_id = slot_images.Insert(instance, runtime, slot_image_views, info);
+        DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageCreates);
         RegisterImage(stencil_id);
     }
     Image& stencil_image = slot_images[stencil_id];
@@ -1492,6 +1497,8 @@ void TextureCache::RefreshImage(Image& image) {
         copy.bufferOffset += offset;
     }
 
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageUploads);
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageUploadKb, image.info.guest_size >> 10);
     runtime.UploadImage(&image, buffer, image_copies);
 }
 
@@ -2042,6 +2049,7 @@ u32 TextureCache::MemoVictim(const FindImageMemoEntry* set, u32 ways) const {
 }
 
 void TextureCache::DeleteImage(ImageId image_id) {
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageDeletes);
     Image& image = slot_images[image_id];
     ASSERT_MSG(image.IsUntracked(), "Image was not untracked");
     ASSERT_MSG(False(image.flags & ImageFlagBits::Registered), "Image was not unregistered");
