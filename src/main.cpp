@@ -24,6 +24,7 @@
 #include "core/ipc/ipc.h"
 #include "core/user_settings.h"
 #include "driveclub/launch_check.h"
+#include "driveclub/launcher.h"
 #include "emulator.h"
 #include "imgui/big_picture/big_picture.h"
 
@@ -113,14 +114,9 @@ int main(int argc, char* argv[]) {
     app.allow_extras();
 
     // ---- No-args behavior ----
-    if (argc == 1) {
-        // driveclub-pc: one game, one argument.
-        const auto usage = DriveclubPC::UsageText();
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Driveclub-PC", usage.c_str(),
-                                 nullptr);
-        std::cout << usage << "\n\n" << app.help();
-        return -1;
-    }
+    // driveclub-pc: started without arguments (double-click), the settings window picks the
+    // game folder and options (driveclub/launcher.h).
+    const bool launcher_mode = argc == 1;
 
     try {
         bool double_dash_found = false;
@@ -180,6 +176,16 @@ int main(int argc, char* argv[]) {
         EmulatorSettings.Save();
         LOG_INFO(Config, "Addon folder successfully saved.");
         return 0;
+    }
+
+    if (launcher_mode) {
+        const auto chosen = DriveclubPC::Launcher::Run();
+        if (!chosen) {
+            return 0;
+        }
+        gamePath = chosen->string();
+    } else {
+        DriveclubPC::Launcher::ApplySavedRuntimeOptions();
     }
 
     if (!gamePath.has_value()) {

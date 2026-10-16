@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <chrono>
+#include "driveclub/frame_rate.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/thread.h"
@@ -344,6 +347,8 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     Common::SetCurrentThreadRealtime(vblank_period);
 
     Common::AccurateTimer timer{vblank_period};
+    const u64 min_flip_interval_ns = DriveclubPC::FrameRate::MinFlipIntervalNs();
+    u64 next_flip_ns = 0;
 
     const auto receive_request = [this] -> Request {
         std::scoped_lock lk{mutex};
@@ -366,7 +371,15 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 
         // Check if it's time to take a request.
         auto& vblank_status = main_port.vblank_status;
-        if (vblank_status.count % (main_port.flip_rate + 1) == 0) {
+        // driveclub-pc: target frame rate (driveclub/frame_rate.h): a minimum flip rate for 30
+        // FPS, a minimum flip interval on the fine vblank grid. 0.3 ms of slack keeps timer
+        // jitter from pushing a due flip to the next vblank without letting the rate creep up.
+        const s32 flip_rate = std::max(main_port.flip_rate, DriveclubPC::FrameRate::MinFlipRate());
+        const u64 now_ns = static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                std::chrono::steady_clock::now().time_since_epoch())
+                                                .count());
+        const bool interval_ok = min_flip_interval_ns == 0 || now_ns + 300'000 >= next_flip_ns;
+        if (vblank_status.count % (flip_rate + 1) == 0 && interval_ok) {
             const auto request = receive_request();
             if (!request) {
                 if (timer.GetTotalWait().count() < 0) { // Dont draw too fast
@@ -377,6 +390,12 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                     }
                 }
             } else {
+                // The next flip is due one interval after this one was due, so the average
+                // rate matches the target even though vblank ticks are not exactly 1/480 s;
+                // after a late frame the schedule restarts from now.
+                next_flip_ns = now_ns > next_flip_ns + min_flip_interval_ns / 2
+                                   ? now_ns + min_flip_interval_ns
+                                   : next_flip_ns + min_flip_interval_ns;
                 Flip(request);
                 FRAME_END;
             }
