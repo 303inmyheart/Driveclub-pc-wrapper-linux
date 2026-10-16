@@ -79,6 +79,19 @@ private:
 // Called by the presenter for every presented guest frame.
 void OnGuestFrame();
 
+// Event trace of a short window (DCPC_TRACE_AT=<seconds after the first frame>,
+// DCPC_TRACE_MS=<length, default 300>), written to user/log/frame_trace.csv with
+// columns ns,kind,thread,queue,address,value. Needs DCPC_PROFILE=1.
+//   gpu_write   value at a fence/label address right after a queue wrote it
+//   wait_begin  a queue started blocking on an address (value = what it holds now)
+//   wait_end    the wait was satisfied (value = what it holds now)
+//   submit      the game submitted to a queue
+//   flip        a guest frame was presented
+enum class TraceKind : u8 { GpuWrite, WaitBegin, WaitEnd, Submit, Flip };
+void Trace(TraceKind kind, u64 address, u32 queue);
+/// gpu_write for an address a queue just wrote.
+void TraceGpuWrite(u64 address, u32 queue);
+
 u64 NowNs();
 
 } // namespace DriveclubPC::Profiler

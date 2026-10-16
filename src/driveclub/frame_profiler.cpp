@@ -7,9 +7,12 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -57,6 +60,23 @@ SharedCounters g_shared;
 CpCounters g_cp;
 std::atomic<int> g_enabled{-1}; // -1 = not decided yet
 std::atomic<u32> g_phase{0};
+
+// Event trace (DCPC_TRACE_AT).
+struct TraceEvent {
+    u64 ns;
+    u64 address;
+    u64 value;
+    u32 queue;
+    u32 tid;
+    TraceKind kind;
+};
+constexpr size_t kTraceCapacity = 1u << 20;
+std::atomic<int> g_trace_state{0}; // 0 waiting, 1 recording, 2 done
+std::atomic<size_t> g_trace_count{0};
+std::unique_ptr<TraceEvent[]> g_trace;
+u64 g_trace_start_ns = 0, g_trace_len_ns = 0;
+double g_trace_at_s = -1;
+u64 g_first_frame_ns = 0;
 std::atomic<u64> g_frames{0};
 std::array<std::atomic<u64>, MaxQueues> g_last_submit_ns{};
 
@@ -113,6 +133,12 @@ bool Decide() {
                          "wait_asc_ms,wait_gpu_label_ms,wait_cpu_label_ms,waits,backoffs,"
                          "gfx_wait_late_ms,gfx_wait_queued_ms,phase\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
+            if (const char* at = std::getenv("DCPC_TRACE_AT")) {
+                g_trace_at_s = std::atof(at);
+                const char* len = std::getenv("DCPC_TRACE_MS");
+                g_trace_len_ns = static_cast<u64>((len ? std::atof(len) : 300.0) * 1e6);
+                g_trace = std::make_unique<TraceEvent[]>(kTraceCapacity);
+            }
             LOG_INFO(Debug, "Driveclub-PC frame profiler writing {}", path.string());
         } else {
             LOG_ERROR(Debug, "Driveclub-PC frame profiler cannot open {}", path.string());
@@ -238,6 +264,116 @@ void AddBackoff() {
     Bump(g_cp.backoffs, 1);
 }
 
+namespace {
+
+u32 CurrentTid() {
+#ifdef _WIN32
+    return GetCurrentThreadId();
+#else
+    return 0;
+#endif
+}
+
+std::string ThreadNameOf(u32 tid) {
+#ifdef _WIN32
+    std::string name;
+    if (HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid)) {
+        PWSTR desc = nullptr;
+        if (SUCCEEDED(GetThreadDescription(h, &desc)) && desc && desc[0]) {
+            const int n = WideCharToMultiByte(CP_UTF8, 0, desc, -1, nullptr, 0, nullptr, nullptr);
+            name.resize(n > 0 ? n - 1 : 0);
+            WideCharToMultiByte(CP_UTF8, 0, desc, -1, name.data(), n, nullptr, nullptr);
+        }
+        if (desc) {
+            LocalFree(desc);
+        }
+        CloseHandle(h);
+    }
+    return name.empty() ? std::to_string(tid) : name;
+#else
+    return std::to_string(tid);
+#endif
+}
+
+u64 ReadGuestU64(u64 address) {
+    // Labels may be 4 bytes at the end of a page; never read past it.
+    u64 value = 0;
+    if (address != 0) {
+        const size_t bytes = (address & 0xFFF) <= 0xFF8 ? 8 : 4;
+        std::memcpy(&value, reinterpret_cast<const void*>(address), bytes);
+    }
+    return value;
+}
+
+void DumpTrace() {
+    const size_t count = std::min(g_trace_count.load(std::memory_order_acquire), kTraceCapacity);
+    const auto path = Common::FS::GetUserPath(Common::FS::PathType::LogDir) / "frame_trace.csv";
+    std::FILE* file = std::fopen(path.string().c_str(), "w");
+    if (!file) {
+        LOG_ERROR(Debug, "Driveclub-PC frame trace cannot open {}", path.string());
+        return;
+    }
+    static constexpr const char* kKinds[] = {"gpu_write", "wait_begin", "wait_end", "submit",
+                                             "flip"};
+    std::unordered_map<u32, std::string> names;
+    std::fprintf(file, "ns,kind,thread,queue,address,value\n");
+    for (size_t i = 0; i < count; ++i) {
+        const auto& e = g_trace[i];
+        auto [it, inserted] = names.try_emplace(e.tid);
+        if (inserted) {
+            it->second = ThreadNameOf(e.tid);
+        }
+        std::fprintf(file, "%llu,%s,%s,%u,0x%llx,0x%llx\n",
+                     static_cast<unsigned long long>(e.ns - g_trace_start_ns),
+                     kKinds[static_cast<u32>(e.kind)], it->second.c_str(), e.queue,
+                     static_cast<unsigned long long>(e.address),
+                     static_cast<unsigned long long>(e.value));
+    }
+    std::fclose(file);
+    LOG_INFO(Debug, "Driveclub-PC frame trace: {} events written to {}", count, path.string());
+}
+
+/// Called per presented frame: starts and ends the trace window.
+void UpdateTraceWindow(u64 now) {
+    if (!g_trace) {
+        return;
+    }
+    if (g_first_frame_ns == 0) {
+        g_first_frame_ns = now;
+    }
+    const int state = g_trace_state.load(std::memory_order_relaxed);
+    if (state == 0 && now - g_first_frame_ns >= static_cast<u64>(g_trace_at_s * 1e9)) {
+        g_trace_start_ns = now;
+        g_trace_state.store(1, std::memory_order_release);
+        LOG_INFO(Debug, "Driveclub-PC frame trace: recording {} ms", g_trace_len_ns / 1000000);
+    } else if (state == 1 && now - g_trace_start_ns >= g_trace_len_ns) {
+        g_trace_state.store(2, std::memory_order_release);
+        // Writers that read state 1 just before may still be storing; let them finish.
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        DumpTrace();
+    }
+}
+
+} // namespace
+
+void Trace(TraceKind kind, u64 address, u32 queue) {
+    if (g_trace_state.load(std::memory_order_relaxed) != 1) {
+        return;
+    }
+    const size_t slot = g_trace_count.fetch_add(1, std::memory_order_relaxed);
+    if (slot >= kTraceCapacity) {
+        return;
+    }
+    g_trace[slot] = {NowNs(), address,
+                     kind == TraceKind::Submit || kind == TraceKind::Flip ? 0
+                                                                          : ReadGuestU64(address),
+                     queue, CurrentTid(), kind};
+}
+
+void TraceGpuWrite(u64 address, u32 queue) {
+    Trace(TraceKind::GpuWrite, address, queue);
+}
+
 void SetPhase(u32 phase) {
     g_phase.store(phase, std::memory_order_relaxed);
 }
@@ -255,6 +391,7 @@ void NoteSubmit(u32 queue) {
         return;
     }
     g_last_submit_ns[queue].store(NowNs(), std::memory_order_release);
+    Trace(TraceKind::Submit, 0, queue);
     std::scoped_lock lock{g_submitters_mutex};
     ++g_submitters[{queue, CurrentThreadName()}];
 }
@@ -262,6 +399,7 @@ void NoteSubmit(u32 queue) {
 void WaitScope::Blocked() {
     if (start_ns_ == 0 && Enabled()) {
         start_ns_ = NowNs();
+        Trace(TraceKind::WaitBegin, address_, queue_ == WaitQueue::Gfx ? 0 : 1);
         const auto it = g_label_writer.find(address_);
         gpu_writes_at_start_ = it != g_label_writer.end() ? it->second.count : 0;
     }
@@ -273,6 +411,7 @@ WaitScope::~WaitScope() {
     }
     const u64 end = NowNs();
     const u64 ns = end - start_ns_;
+    Trace(TraceKind::WaitEnd, address_, queue_ == WaitQueue::Gfx ? 0 : 1);
     const auto writer = g_label_writer.find(address_);
     const bool known = writer != g_label_writer.end();
     // Ended by a GPU-queue write during the wait; otherwise the game's CPU code wrote the value.
@@ -305,6 +444,8 @@ void OnGuestFrame() {
         return;
     }
     const u64 now = NowNs();
+    Trace(TraceKind::Flip, 0, 0);
+    UpdateTraceWindow(now);
     std::scoped_lock lock{g_writer.mutex};
     auto& w = g_writer;
     const double frame_ms = w.last_frame_ns ? Ms(now - w.last_frame_ns) : 0.0;

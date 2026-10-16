@@ -12,6 +12,7 @@
 #include <fmt/xchar.h>
 #include <hwinfo/hwinfo.h>
 
+#include "driveclub/autopilot.h"
 #include "common/debug.h"
 #include "common/logging/log.h"
 #include "common/string_util.h"
@@ -636,7 +637,8 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     // Initialize components
     memory = Core::Memory::Instance();
     controllers = Common::Singleton<Input::GameControllers>::Instance();
-    linker = Common::Singleton<Core::Linker>::Instance();
+    DriveclubPC::Autopilot::Start();
+    linker =Common::Singleton<Core::Linker>::Instance();
 
     // Load renderdoc module
     VideoCore::LoadRenderDoc();

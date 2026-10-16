@@ -1106,6 +1106,7 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
                 auto* memory = Core::Memory::Instance();
                 ASSERT(memory->TryWriteBacking(address, &data, num_bytes));
             });
+            DriveclubPC::Profiler::TraceGpuWrite(event_eos->Address<u64>(), GfxQueueId);
             if (event_eos->command == PM4CmdEventWriteEos::Command::GdsStore) {
                 ASSERT(event_eos->size == 1);
                 if (rasterizer) {
@@ -1127,6 +1128,8 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
                     ASSERT(memory->TryWriteBacking(address, &data, num_bytes));
                 },
                 [] { Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxEop); });
+            DriveclubPC::Profiler::TraceGpuWrite(reinterpret_cast<u64>(event_eop->Address<u8>()),
+                                                 GfxQueueId);
             break;
         }
         case PM4ItOpcode::DmaData: {
@@ -1174,6 +1177,7 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
                 FenceDrainAndDownload(rasterizer);
                 CpWriteOrCopy(rasterizer, write_data->Address<void*>(), write_data->data,
                               data_size);
+                DriveclubPC::Profiler::TraceGpuWrite(write_data->Address<u64>(), GfxQueueId);
             } else {
                 UNREACHABLE();
             }
@@ -1552,6 +1556,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                 FenceDrainAndDownload(rasterizer);
                 CpWriteOrCopy(rasterizer, write_data->Address<void*>(), write_data->data,
                               data_size);
+                DriveclubPC::Profiler::TraceGpuWrite(write_data->Address<u64>(), vqid + 1);
             } else {
                 UNREACHABLE();
             }
@@ -1588,6 +1593,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                 [this](VAddr dst, u16 gds_index, u16 num_dwords) {
                     rasterizer->CopyBuffer(dst, gds_index, num_dwords * sizeof(u32), false, true);
                 });
+            DriveclubPC::Profiler::TraceGpuWrite(release_mem->Address<u64>(), vqid + 1);
             break;
         }
         case PM4ItOpcode::EventWrite: {

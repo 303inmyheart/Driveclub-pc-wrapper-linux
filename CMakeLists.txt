@@ -1342,6 +1342,8 @@ add_executable(shadps4
     src/driveclub/launch_check.h
     src/driveclub/frame_profiler.cpp
     src/driveclub/frame_profiler.h
+    src/driveclub/autopilot.cpp
+    src/driveclub/autopilot.h
     src/driveclub/deferred_recording.cpp
     src/driveclub/deferred_recording.h
     src/driveclub/vkcmd_list.inc
