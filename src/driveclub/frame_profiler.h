@@ -38,6 +38,8 @@
 //   image_creates, image_deletes  texture-cache images created / deleted (garbage collector)
 //   image_uploads, image_upload_kb  CPU-written images uploaded (detiled) to the GPU
 //   file_reads, file_read_kb  game file reads (streaming)
+//   time_spin_sleeps      short sleeps inserted into Game:Main's time polling loop
+//                         (DCPC_TIME_SPIN, see kernel/time.cpp)
 //   gpu_ms, gpu_max_ms, gpu_batches  GPU execution time of the command processor's batches
 //                         completed in the frame (completion time minus the later of its submit
 //                         and the previous batch's completion), the longest batch, batch count
@@ -79,6 +81,7 @@ enum class Event : u8 {
     ImageUploadKb,
     FileReads,
     FileReadKb,
+    TimeSpinSleeps,
     Count
 };
 void AddEvent(Event event, u64 value = 1);

@@ -13,6 +13,7 @@
 #include "common/debug.h"
 #include "common/div_ceil.h"
 #include "common/rdtsc.h"
+#include "driveclub/diag_tables.h"
 #include "driveclub/frame_profiler.h"
 #include "common/scope_exit.h"
 #include "core/emulator_settings.h"
@@ -31,6 +32,19 @@
 #include "video_core/texture_cache/tile_manager.h"
 
 namespace VideoCore {
+
+namespace {
+// driveclub-pc: image churn counters (frame profiler) and table (DiagTables).
+void NoteImageEvent(u32 site, const ImageInfo& info) {
+    DriveclubPC::Profiler::AddEvent(site == 255 ? DriveclubPC::Profiler::Event::ImageDeletes
+                                                : DriveclubPC::Profiler::Event::ImageCreates);
+    if (DriveclubPC::DiagTables::Active()) {
+        DriveclubPC::DiagTables::NoteImage(site, info.guest_address, info.size.width,
+                                           info.size.height, static_cast<u32>(info.pixel_format),
+                                           static_cast<u32>(info.tile_mode), info.guest_size);
+    }
+}
+} // namespace
 
 static constexpr u32 MAX_IMAGES = std::numeric_limits<u16>::max();
 static constexpr u32 MAX_IMAGE_VIEWS = std::numeric_limits<u16>::max();
@@ -411,7 +425,7 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         new_info.resources = std::max(requested_info.resources, cache_image.info.resources);
         new_info.UpdateSize();
         const auto new_image_id = slot_images.Insert(instance, runtime, slot_image_views, new_info);
-        DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageCreates);
+        NoteImageEvent(0, new_info);
         RegisterImage(new_image_id);
 
         // Inherit image usage
@@ -673,7 +687,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 
 ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
     const auto new_image_id = slot_images.Insert(instance, runtime, slot_image_views, info);
-    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageCreates);
+    NoteImageEvent(1, info);
     RegisterImage(new_image_id);
 
     auto& src_image = slot_images[image_id];
@@ -1141,7 +1155,7 @@ ImageId TextureCache::FindImageSlow(ImageDesc& desc, bool exact_fmt, ImageId ima
     // Create and register a new image
     if (!image_id) {
         image_id = slot_images.Insert(instance, runtime, slot_image_views, info);
-        DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageCreates);
+        NoteImageEvent(2, info);
         RegisterImage(image_id);
     }
     return image_id;
@@ -1418,7 +1432,7 @@ void TextureCache::AssociateStencil(ImageId depth_id, const ImageInfo& depth_inf
         info.guest_size = depth_info.stencil_size;
         info.size = depth_info.size;
         stencil_id = slot_images.Insert(instance, runtime, slot_image_views, info);
-        DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageCreates);
+        NoteImageEvent(3, info);
         RegisterImage(stencil_id);
     }
     Image& stencil_image = slot_images[stencil_id];
@@ -2049,8 +2063,8 @@ u32 TextureCache::MemoVictim(const FindImageMemoEntry* set, u32 ways) const {
 }
 
 void TextureCache::DeleteImage(ImageId image_id) {
-    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageDeletes);
     Image& image = slot_images[image_id];
+    NoteImageEvent(255, image.info);
     ASSERT_MSG(image.IsUntracked(), "Image was not untracked");
     ASSERT_MSG(False(image.flags & ImageFlagBits::Registered), "Image was not unregistered");
 

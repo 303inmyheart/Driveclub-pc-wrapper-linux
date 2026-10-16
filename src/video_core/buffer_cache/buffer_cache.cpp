@@ -15,6 +15,7 @@
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/threads/exception.h"
 #include "core/memory.h"
+#include "driveclub/diag_tables.h"
 #include "driveclub/frame_profiler.h"
 #include "driveclub/performance.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -292,6 +293,8 @@ u64 BufferCache::CollectDownloads(const Buffer* arena, VAddr device_addr, u64 si
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
     // driveclub-pc: inclusive cost, including synchronous GPU waits.
     DriveclubPC::Profiler::CostScope cost{DriveclubPC::Profiler::Cost::Download};
+    const u64 diag_start =
+        DriveclubPC::DiagTables::Active() ? DriveclubPC::Profiler::NowNs() : 0;
     DownloadCopies copies;
     const VAddr arena_base = arena->cpu_addr;
     u64 total_size_bytes = 0;
@@ -330,6 +333,10 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     if (readback_offload) {
         std::scoped_lock lk{readback_mutex};
         std::erase(inflight_downloads, std::pair<VAddr, u64>{device_addr, size});
+    }
+    if (diag_start) {
+        DriveclubPC::DiagTables::NoteDownload(device_addr, total_size_bytes,
+                                              DriveclubPC::Profiler::NowNs() - diag_start);
     }
 }
 

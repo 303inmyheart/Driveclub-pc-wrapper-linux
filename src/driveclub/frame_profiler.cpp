@@ -19,6 +19,7 @@
 #include "common/logging/log.h"
 #include "common/path_util.h"
 #include "common/rdtsc.h"
+#include "driveclub/diag_tables.h"
 #include "driveclub/frame_profiler.h"
 #include "driveclub/guest_stats.h"
 #include "driveclub/vk_call_stats.h"
@@ -158,7 +159,8 @@ bool Decide() {
                          "descriptor_elements,descriptor_gap_fills,empty_queue_skips,"
                          "vk_cp_calls,vk_cp_ms,vk_other_ms,main_hle_ms,main_fault_ms,"
                          "resident_binds,resident_kb,sparse_submits,image_creates,image_deletes,"
-                         "image_uploads,image_upload_kb,file_reads,file_read_kb,gpu_ms,gpu_max_ms,"
+                         "image_uploads,image_upload_kb,file_reads,file_read_kb,time_spin_sleeps,gpu_ms,"
+                         "gpu_max_ms,"
                          "gpu_batches,submit_delay_max_ms,present_hold_max_ms\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
             if (const char* at = std::getenv("DCPC_TRACE_AT")) {
@@ -571,6 +573,7 @@ void OnGuestFrame() {
     VkCallStats::TakeFrame(vk_cp_calls, vk_cp_ms, vk_other_ms);
     double main_hle_ms = 0, main_fault_ms = 0;
     GuestStats::TakeFrame(main_hle_ms, main_fault_ms);
+    DiagTables::OnFrame();
     std::fprintf(
         w.file, ",%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.3f,%.3f,%.3f,%.3f",
         static_cast<unsigned long long>(Delta(g_cp.template_updates, w.template_updates)),

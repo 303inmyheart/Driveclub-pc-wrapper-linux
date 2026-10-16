@@ -23,6 +23,8 @@
 #include "core/memory.h"
 #include "core/signals.h"
 #include "driveclub/frame_profiler.h"
+#include "driveclub/diag_tables.h"
+#include "driveclub/frame_profiler.h"
 #include "driveclub/guest_stats.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
@@ -722,6 +724,15 @@ struct SignalImpl : public PageManager::Impl {
         if (Common::IsWriteError(context)) {
             return rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
         } else {
+            if (!is_gpu_thread && DriveclubPC::DiagTables::Active()) {
+                // driveclub-pc: which guest instruction reads GPU-written memory back.
+                const u64 start = DriveclubPC::Profiler::NowNs();
+                const bool handled = rasterizer->ReadMemory(addr, size, is_gpu_thread);
+                DriveclubPC::DiagTables::NoteReadFault(
+                    reinterpret_cast<u64>(Common::GetRip(context)), addr,
+                    DriveclubPC::Profiler::NowNs() - start);
+                return handled;
+            }
             return rasterizer->ReadMemory(addr, size, is_gpu_thread);
         }
         return false;
