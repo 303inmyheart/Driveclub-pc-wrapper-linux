@@ -30,6 +30,8 @@
 //   vk_cp_calls, vk_cp_ms Vulkan calls the command processor made and the time it spent in the
 //                         driver; vk_other_ms the driver time of all other threads
 //                         (DCPC_VK_STATS=1, otherwise 0; see vk_call_stats.h)
+//   main_hle_ms, main_fault_ms  Game:Main time in HLE calls and in guest fault handling
+//                         (DCPC_GUEST_STATS=1, otherwise 0; see guest_stats.h)
 // Every 600 frames the command processor also logs the wait addresses with the most time and which
 // game threads submitted to which queue.
 

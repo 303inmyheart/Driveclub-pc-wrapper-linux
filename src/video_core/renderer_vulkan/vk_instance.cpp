@@ -10,6 +10,7 @@
 #include "common/types.h"
 #include "core/emulator_settings.h"
 #include "driveclub/deferred_recording.h"
+#include "driveclub/guest_stats.h"
 #include "driveclub/vk_call_stats.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
@@ -598,6 +599,7 @@ bool Instance::CreateDevice() {
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
     // Before deferred recording, which then calls through the statistics thunks.
     DriveclubPC::VkCallStats::Install();
+    DriveclubPC::GuestStats::Install();
     DriveclubPC::DeferredRecording::Install();
 
     graphics_queue = device->getQueue(queue_family_index, 0);

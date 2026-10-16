@@ -15,12 +15,15 @@
 #include "common/error.h"
 #include "common/logging/log.h"
 #include "common/multi_level_page_table.h"
+#include "common/rdtsc.h"
+#include "common/scope_exit.h"
 #include "common/signal_context.h"
 #include "common/thread.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
 #include "core/signals.h"
 #include "driveclub/frame_profiler.h"
+#include "driveclub/guest_stats.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 
@@ -695,6 +698,14 @@ struct SignalImpl : public PageManager::Impl {
         const auto size = std::min<u64>(8, PageManager::GetNextPageAddr(addr) - addr);
         const auto is_gpu_thread =
             std::this_thread::get_id() == rasterizer->GetGpuCommandProcessorThread();
+        const u64 stats_start =
+            DriveclubPC::GuestStats::Active() && !is_gpu_thread ? Common::FencedRDTSC() : 0;
+        SCOPE_EXIT {
+            if (stats_start != 0) {
+                DriveclubPC::GuestStats::BookFault(Common::IsWriteError(context),
+                                                   Common::FencedRDTSC() - stats_start);
+            }
+        };
 #ifdef _WIN32
         if (EndRedirect(context, false)) {
             // The redirected instruction faulted again; it re-runs against guest memory.

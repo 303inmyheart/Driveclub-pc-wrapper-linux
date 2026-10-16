@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include "common/types.h"
+#include "driveclub/guest_stats.h"
 #ifdef _WIN32
 #include <malloc.h>
 #endif
@@ -53,6 +54,16 @@ struct HostCallWrapperImpl;
 template <class ReturnType, class... Args, PS4_SYSV_ABI ReturnType (*func)(Args...)>
 struct HostCallWrapperImpl<func> {
     static ReturnType PS4_SYSV_ABI wrap(Args... args) {
+        // driveclub-pc: DCPC_GUEST_STATS times every HLE call (driveclub/guest_stats.h).
+        if (DriveclubPC::GuestStats::Active()) [[unlikely]] {
+#ifdef _MSC_VER
+            static const u32 id = DriveclubPC::GuestStats::Register(__FUNCSIG__);
+#else
+            static const u32 id = DriveclubPC::GuestStats::Register(__PRETTY_FUNCTION__);
+#endif
+            DriveclubPC::GuestStats::Scope scope{id};
+            return func(args...);
+        }
         return func(args...);
     }
 };
