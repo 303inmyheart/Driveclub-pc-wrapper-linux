@@ -6,6 +6,9 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <shared_mutex>
+#include <thread>
+#include <unordered_map>
 #include <boost/container/small_vector.hpp>
 
 #include "common/interval_set.h"
@@ -107,6 +110,14 @@ public:
     /// Commits pending sparse buffer memory binds. Must be called before every scheduler submit.
     void SubmitPendingArenaBinds(Vulkan::SubmitInfo& info);
 
+    /// Adds downloads of the readback windows the guest faulted on recently and this batch
+    /// writes to the batch being submitted. Runs on the GPU thread from the submit callback.
+    void PrefetchReadbacks();
+
+    /// True when [addr, addr + size) may hold GPU written bytes that guest memory lacks: bytes in
+    /// gpu_modified_ranges, in a readback in flight or in a vetoed readback. Thread safe.
+    bool IsGpuData(VAddr addr, u64 size);
+
     /// residency_bitmap and clean_sync_peek telemetry, reset on read.
     struct FastPathStats {
         u64 resident_checks;
@@ -152,6 +163,9 @@ private:
     /// Returns false when the request has to take the synchronous download.
     bool OffloadReadback(VAddr device_addr, u64 size, bool is_write);
 
+    /// Waits for a pending readback of the window and returns true when it resolved the request.
+    bool WaitPendingReadback(VAddr window, VAddr device_addr, u64 size, bool is_write);
+
     /// Records and submits the download of a readback window. Runs on the GPU thread.
     void RecordReadback(Readback& job);
 
@@ -161,6 +175,11 @@ private:
 
     /// True when a pending readback window overlaps the range. Requires readback_mutex.
     bool IsReadbackPending(VAddr addr, u64 size) const;
+
+    /// Moves the GPU modified ranges of a readback window into the job's copies and marks the
+    /// window pending, in one step under readback_mutex so IsGpuData never misses the ranges.
+    /// Returns the packed size, 0 when there is nothing to download or the window is pending.
+    u64 ClaimReadbackWindow(const Buffer* arena, VAddr window, DownloadCopies& copies);
 
     /// Merges the vetoed readback ranges back into gpu_modified_ranges. Requires readback_mutex.
     void MergeReadbackReturns();
@@ -187,6 +206,8 @@ private:
     Buffer gds_buffer;
     std::unique_ptr<Buffer> null_index_buffer;
     RangeSet gpu_modified_ranges;
+    /// Lets IsGpuData read gpu_modified_ranges from faulting threads; the GPU thread alone writes.
+    std::shared_mutex gpu_ranges_mutex;
 
     std::unique_ptr<FaultManager> fault_manager;
     std::unique_ptr<Buffer> bda_pagetable_buffer;
@@ -227,8 +248,26 @@ private:
     /// Readback windows with a submitted download that the faulting thread has yet to finish,
     /// at most one per window.
     std::vector<VAddr> pending_readbacks;
+    /// The ranges the pending readbacks download.
+    std::vector<std::pair<VAddr, u64>> pending_ranges;
     /// Ranges of vetoed readbacks, merged back into gpu_modified_ranges on the GPU thread.
     std::vector<std::pair<VAddr, u64>> readback_returns;
+    /// Synchronous downloads whose ranges left gpu_modified_ranges but are not in guest memory yet.
+    std::vector<std::pair<VAddr, u64>> inflight_downloads;
+
+    /// driveclub-pc readback prefetch, opt-in (DCPC_READBACK_PREFETCH=1). Windows the guest
+    /// faulted on within the last second are downloaded with every batch that writes them, and a
+    /// finisher thread writes them back once the batch is done, so a later guest access finds the
+    /// window resolved or in flight instead of starting a readback of its own.
+    bool prefetch{};
+    /// Scheduler tick of the last GPU write marked in each readback window (GPU thread only).
+    std::unordered_map<VAddr, u64> window_write_tick;
+    /// Readback windows the guest faulted on, with the time of the last fault (GPU thread only).
+    std::unordered_map<VAddr, s64> hot_windows;
+    std::mutex finisher_mutex;
+    std::condition_variable_any finisher_cv;
+    std::deque<std::unique_ptr<Readback>> finisher_jobs;
+    std::jthread readback_finisher;
 };
 
 } // namespace VideoCore

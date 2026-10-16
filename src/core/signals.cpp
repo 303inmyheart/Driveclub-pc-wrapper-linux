@@ -123,8 +123,12 @@ static LONG WINAPI SignalHandler(EXCEPTION_POINTERS* pExp) noexcept {
         guest_info._si_signo = POSIX_SIGILL;
         guest_info._si_code = POSIX_ILL_BADSTK; // i am not sure about this one either
         break;
-    case EXCEPTION_BREAKPOINT:
     case EXCEPTION_SINGLE_STEP:
+        if (signals->DispatchSingleStep(pExp)) {
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+        [[fallthrough]];
+    case EXCEPTION_BREAKPOINT:
         guest_info._si_signo = POSIX_SIGTRAP;
         guest_info._si_code = POSIX_TRAP_BRKPT;
         break;

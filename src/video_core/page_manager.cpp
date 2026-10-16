@@ -4,11 +4,13 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <mutex>
 #include <utility>
 #include "common/adaptive_mutex.h"
 #include "common/assert.h"
 #include "common/debug.h"
+#include "common/decoder.h"
 #include "common/div_ceil.h"
 #include "common/error.h"
 #include "common/logging/log.h"
@@ -18,6 +20,7 @@
 #include "core/emulator_settings.h"
 #include "core/memory.h"
 #include "core/signals.h"
+#include "driveclub/frame_profiler.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 
@@ -425,6 +428,205 @@ public:
 };
 #endif // __linux__
 
+#ifdef _WIN32
+// driveclub-pc: the tracker protects whole pages, but the GPU often writes a few bytes of a page
+// whose other bytes the guest uses as plain CPU data (counters copied from GDS next to the
+// objects that own them). A read fault whose exact access misses every GPU written byte of the
+// page needs no readback: the instruction is single-stepped with its base register pointing into
+// the unprotected backing view of the same memory. Any other fault takes the readback.
+// Opt-in: DCPC_READBACK_REDIRECT=1.
+namespace {
+
+struct RedirectState {
+    bool active{};
+    bool restore{};
+    ZydisRegister base{};
+    u64 delta{};
+};
+thread_local RedirectState redirect_state{};
+
+u32 redirect_mode = 0;
+std::atomic<u64> redirect_counts[2]{};
+
+constexpr u32 TRAP_FLAG = 0x100;
+
+u64* GprSlot(CONTEXT* ctx, ZydisRegister reg) {
+    switch (reg) {
+    case ZYDIS_REGISTER_RAX:
+        return &ctx->Rax;
+    case ZYDIS_REGISTER_RBX:
+        return &ctx->Rbx;
+    case ZYDIS_REGISTER_RCX:
+        return &ctx->Rcx;
+    case ZYDIS_REGISTER_RDX:
+        return &ctx->Rdx;
+    case ZYDIS_REGISTER_RSI:
+        return &ctx->Rsi;
+    case ZYDIS_REGISTER_RDI:
+        return &ctx->Rdi;
+    case ZYDIS_REGISTER_RBP:
+        return &ctx->Rbp;
+    case ZYDIS_REGISTER_R8:
+        return &ctx->R8;
+    case ZYDIS_REGISTER_R9:
+        return &ctx->R9;
+    case ZYDIS_REGISTER_R10:
+        return &ctx->R10;
+    case ZYDIS_REGISTER_R11:
+        return &ctx->R11;
+    case ZYDIS_REGISTER_R12:
+        return &ctx->R12;
+    case ZYDIS_REGISTER_R13:
+        return &ctx->R13;
+    case ZYDIS_REGISTER_R14:
+        return &ctx->R14;
+    case ZYDIS_REGISTER_R15:
+        return &ctx->R15;
+    default:
+        return nullptr;
+    }
+}
+
+ZydisRegister Enclosing(ZydisRegister reg) {
+    return ZydisRegisterGetLargestEnclosing(ZYDIS_MACHINE_MODE_LONG_64, reg);
+}
+
+bool RedirectEnabled() {
+    return redirect_mode != 0 && VideoCore::ReadbackFeaturesActive();
+}
+
+/// Returns true when the faulting read was set up to run against the backing view.
+bool TryRedirectRead(Vulkan::Rasterizer* rasterizer, void* context, VAddr fault_addr) {
+    auto* ctx = static_cast<EXCEPTION_POINTERS*>(context)->ContextRecord;
+    ZydisDecodedInstruction inst;
+    ZydisDecodedOperand ops[ZYDIS_MAX_OPERAND_COUNT];
+    if (!ZYAN_SUCCESS(Common::Decoder::Instance()->decodeInstruction(
+            inst, ops, reinterpret_cast<void*>(ctx->Rip)))) {
+        return false;
+    }
+    const ZydisDecodedOperand* mem = nullptr;
+    for (u32 i = 0; i < inst.operand_count; ++i) {
+        const auto& op = ops[i];
+        if (op.type != ZYDIS_OPERAND_TYPE_MEMORY) {
+            continue;
+        }
+        if (op.visibility == ZYDIS_OPERAND_VISIBILITY_EXPLICIT) {
+            if (mem) {
+                return false;
+            }
+            mem = &op;
+        } else if (Enclosing(op.mem.base) != ZYDIS_REGISTER_RSP) {
+            // Hidden memory operands other than the stack (string instructions) are not handled.
+            return false;
+        }
+    }
+    if (!mem || mem->mem.type != ZYDIS_MEMOP_TYPE_MEM ||
+        (mem->actions & ZYDIS_OPERAND_ACTION_MASK_WRITE) ||
+        (mem->mem.segment != ZYDIS_REGISTER_DS && mem->mem.segment != ZYDIS_REGISTER_NONE)) {
+        return false;
+    }
+    const ZydisRegister base = mem->mem.base;
+    u64* const base_slot = GprSlot(ctx, base);
+    if (!base_slot) {
+        return false;
+    }
+    u64 address = *base_slot + static_cast<u64>(mem->mem.disp.value);
+    if (mem->mem.index != ZYDIS_REGISTER_NONE) {
+        const u64* index_slot = GprSlot(ctx, mem->mem.index);
+        if (!index_slot || mem->mem.index == base) {
+            return false;
+        }
+        address += *index_slot * mem->mem.scale;
+    }
+    const u64 size = mem->size / 8;
+    if (size == 0 || size > 64 || fault_addr < address || fault_addr >= address + size ||
+        (address >> 12) != ((address + size - 1) >> 12)) {
+        return false;
+    }
+    // The base register must not feed the instruction otherwise; a full-width write of it ends
+    // the redirection by itself.
+    bool restore = true;
+    for (u32 i = 0; i < inst.operand_count; ++i) {
+        const auto& op = ops[i];
+        if (&op == mem || op.type != ZYDIS_OPERAND_TYPE_REGISTER ||
+            Enclosing(op.reg.value) != base) {
+            continue;
+        }
+        if ((op.actions & (ZYDIS_OPERAND_ACTION_MASK_READ | ZYDIS_OPERAND_ACTION_CONDWRITE)) ||
+            ZydisRegisterGetWidth(ZYDIS_MACHINE_MODE_LONG_64, op.reg.value) < 32) {
+            return false;
+        }
+        restore = false;
+    }
+    if (!rasterizer->IsReadOfCpuDataOnGpuPage(address, size)) {
+        redirect_counts[1].fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    Core::MemoryManager::BackingSpan span{};
+    if (Core::Memory::Instance()->ResolveBackingSpans(address, size, &span, 1, false) != 1 ||
+        span.size < size) {
+        return false;
+    }
+    const u64 delta = reinterpret_cast<u64>(span.ptr) - address;
+    *base_slot += delta;
+    ctx->EFlags |= TRAP_FLAG;
+    redirect_state = {.active = true, .restore = restore, .base = base, .delta = delta};
+    redirect_counts[0].fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+/// Ends a redirection after its instruction ran, or after it faulted again (then it re-runs
+/// against guest memory).
+bool EndRedirect(void* context, bool completed) {
+    if (!redirect_state.active) {
+        return false;
+    }
+    auto* ctx = static_cast<EXCEPTION_POINTERS*>(context)->ContextRecord;
+    if (redirect_state.restore || !completed) {
+        *GprSlot(ctx, redirect_state.base) -= redirect_state.delta;
+    }
+    ctx->EFlags &= ~TRAP_FLAG;
+    redirect_state.active = false;
+    return true;
+}
+
+bool SingleStepHandler(void* context) {
+    return EndRedirect(context, true);
+}
+
+} // namespace
+#endif
+
+bool ReadbackFeaturesActive() {
+    static const bool alternate = [] {
+        const char* env = std::getenv("DCPC_READBACK_AB");
+        const bool on = env && std::strtoul(env, nullptr, 10) != 0;
+        if (on) {
+            DriveclubPC::Profiler::SetPhase(1);
+            LOG_INFO(Render, "GPU readback features alternate every 10 s (profiler phase 1 = on)");
+        }
+        return on;
+    }();
+    if (!alternate) {
+        return true;
+    }
+    static std::atomic<s64> phase_start_ns{0};
+    static std::atomic<bool> active{true};
+    const s64 now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count();
+    s64 start = phase_start_ns.load(std::memory_order_relaxed);
+    if (start == 0) {
+        phase_start_ns.compare_exchange_strong(start, now);
+    } else if (now - start >= 10'000'000'000 &&
+               phase_start_ns.compare_exchange_strong(start, now)) {
+        const bool next = !active.load(std::memory_order_relaxed);
+        active.store(next, std::memory_order_relaxed);
+        DriveclubPC::Profiler::SetPhase(next ? 1 : 0);
+    }
+    return active.load(std::memory_order_relaxed);
+}
+
 struct SignalImpl : public PageManager::Impl {
     SignalImpl(Vulkan::Rasterizer* rasterizer_) : Impl() {
         rasterizer = rasterizer_;
@@ -433,6 +635,18 @@ struct SignalImpl : public PageManager::Impl {
         constexpr auto priority = std::numeric_limits<u32>::min();
         Core::Signals::Instance()->RegisterAccessViolationHandler(GuestFaultSignalHandler,
                                                                   priority);
+#ifdef _WIN32
+        if (const char* env = std::getenv("DCPC_READBACK_REDIRECT")) {
+            redirect_mode = static_cast<u32>(std::strtoul(env, nullptr, 10));
+        }
+        if (EmulatorSettings.GetReadbacksMode() != GpuReadbacksMode::Precise) {
+            redirect_mode = 0;
+        }
+        if (redirect_mode != 0) {
+            Core::Signals::Instance()->RegisterSingleStepHandler(SingleStepHandler);
+            LOG_INFO(Render, "Read faults that miss GPU written bytes read the backing view");
+        }
+#endif
     }
 
     void Protect(VAddr address, size_t size, Core::MemoryPermission perms) override {
@@ -465,6 +679,12 @@ struct SignalImpl : public PageManager::Impl {
                              "(GPU thread {:.0f})",
                      counts[0].exchange(0) / secs, counts[1].exchange(0) / secs,
                      counts[2].exchange(0) / secs, counts[3].exchange(0) / secs);
+#ifdef _WIN32
+            LOG_INFO(Render,
+                     "Read faults served from the backing view {:.0f}/s, needing GPU bytes "
+                     "{:.0f}/s",
+                     redirect_counts[0].exchange(0) / secs, redirect_counts[1].exchange(0) / secs);
+#endif
         }
     }
 
@@ -473,7 +693,19 @@ struct SignalImpl : public PageManager::Impl {
         const auto size = std::min<u64>(8, PageManager::GetNextPageAddr(addr) - addr);
         const auto is_gpu_thread =
             std::this_thread::get_id() == rasterizer->GetGpuCommandProcessorThread();
+#ifdef _WIN32
+        if (EndRedirect(context, false)) {
+            // The redirected instruction faulted again; it re-runs against guest memory.
+            return true;
+        }
+#endif
         CountFault(Common::IsWriteError(context), is_gpu_thread);
+#ifdef _WIN32
+        if (!is_gpu_thread && !Common::IsWriteError(context) && RedirectEnabled() &&
+            TryRedirectRead(rasterizer, context, addr)) {
+            return true;
+        }
+#endif
         if (Common::IsWriteError(context)) {
             return rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
         } else {

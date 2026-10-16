@@ -15,6 +15,10 @@ class Rasterizer;
 
 namespace VideoCore {
 
+/// driveclub-pc: false while DCPC_READBACK_AB=1 has the readback prefetch and read redirection
+/// turned off; they alternate together every 10 s (profiler phase 1 = on) for A/B runs.
+bool ReadbackFeaturesActive();
+
 struct UffdImpl;
 struct SignalImpl;
 

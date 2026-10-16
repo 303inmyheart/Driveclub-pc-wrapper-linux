@@ -2,10 +2,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <string>
 #include <magic_enum/magic_enum.hpp>
 
 #include "common/alignment.h"
+#include "common/logging/log.h"
 #include "common/scope_exit.h"
+#include "common/thread.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/threads/exception.h"
@@ -16,6 +21,7 @@
 #include "video_core/buffer_cache/memory_tracker.h"
 #include "video_core/buffer_cache/region_definitions.h"
 #include "video_core/buffer_cache/stream_copy_lane.h"
+#include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -52,6 +58,79 @@ std::optional<u32> FindMemoryType(const vk::PhysicalDeviceMemoryProperties& prop
     }
     return std::nullopt;
 }
+
+struct BufferCache::Readback {
+    VAddr window{};
+    DownloadCopies copies{};
+    Vulkan::StagingBufferRef staging{};
+    VAddr arena_base{};
+    u64 write_seq{};
+    u64 tick{};
+    bool busy{};
+    mutable bool vetoed{};
+};
+
+namespace {
+
+s64 NowNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// driveclub-pc: readback statistics, logged every 10 s: guest faults that needed a readback
+// (count and time spent in them, read and write faults of the game's main thread and of the
+// others) and prefetches (vetoed ones were overtaken by a newer GPU write of their window).
+struct ReadbackStats {
+    std::mutex mutex;
+    s64 last_report_ns{};
+    std::array<u64, 4> faults{};
+    std::array<s64, 4> fault_ns{};
+    u64 prefetches{};
+    u64 prefetch_vetoes{};
+
+    void AddFault(bool is_write, s64 time_ns) {
+        thread_local const bool main_thread = Common::GetCurrentThreadName() == "Game:Main";
+        const u32 index = (main_thread ? 0 : 2) + (is_write ? 1 : 0);
+        std::scoped_lock lk{mutex};
+        ++faults[index];
+        fault_ns[index] += time_ns;
+        Report();
+    }
+
+    void AddPrefetch(bool vetoed) {
+        std::scoped_lock lk{mutex};
+        ++prefetches;
+        prefetch_vetoes += vetoed;
+    }
+
+    void Report() {
+        const s64 now = NowNs();
+        if (last_report_ns == 0) {
+            last_report_ns = now;
+            return;
+        }
+        if (now - last_report_ns < 10'000'000'000) {
+            return;
+        }
+        const double secs = static_cast<double>(now - last_report_ns) / 1e9;
+        LOG_INFO(
+            Render,
+            "Readback faults per second (ms/s spent in them): Game:Main read {:.0f} ({:.1f}), "
+            "write {:.0f} ({:.1f}); other threads read {:.0f} ({:.1f}), write {:.0f} ({:.1f}); "
+            "prefetches {:.0f}/s, vetoed {:.0f}/s",
+            faults[0] / secs, fault_ns[0] / secs / 1e6, faults[1] / secs, fault_ns[1] / secs / 1e6,
+            faults[2] / secs, fault_ns[2] / secs / 1e6, faults[3] / secs, fault_ns[3] / secs / 1e6,
+            prefetches / secs, prefetch_vetoes / secs);
+        faults = {};
+        fault_ns = {};
+        prefetches = prefetch_vetoes = 0;
+        last_report_ns = now;
+    }
+};
+ReadbackStats readback_stats;
+
+} // namespace
 
 BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& scheduler_,
                          Vulkan::Runtime& runtime_, AmdGpu::Liverpool* liverpool_,
@@ -109,6 +188,30 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     }
     clean_sync_peek = EmulatorSettings.IsCleanSyncPeek();
     readback_offload = EmulatorSettings.IsReadbackOffload();
+
+    const char* prefetch_env = std::getenv("DCPC_READBACK_PREFETCH");
+    prefetch = readback_offload && prefetch_env && std::strtoul(prefetch_env, nullptr, 10) != 0;
+    if (prefetch) {
+        readback_finisher = std::jthread([this](std::stop_token stoken) {
+            Common::SetCurrentThreadName("shadPS4:ReadbackFinisher");
+            while (true) {
+                std::unique_ptr<Readback> job;
+                {
+                    std::unique_lock lk{finisher_mutex};
+                    finisher_cv.wait(lk, stoken, [&] { return !finisher_jobs.empty(); });
+                    if (stoken.stop_requested()) {
+                        return;
+                    }
+                    job = std::move(finisher_jobs.front());
+                    finisher_jobs.pop_front();
+                }
+                scheduler.GetWorkSemaphore()->Wait(job->tick);
+                FinishReadback(*job);
+                readback_stats.AddPrefetch(job->vetoed);
+            }
+        });
+        LOG_INFO(Render_Vulkan, "GPU readbacks: prefetch of recently read windows");
+    }
 }
 
 BufferCache::~BufferCache() = default;
@@ -126,6 +229,12 @@ void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_lock
 }
 
 void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool assume_locks) {
+    const s64 start_ns = !assume_locks ? NowNs() : 0;
+    SCOPE_EXIT {
+        if (start_ns != 0) {
+            readback_stats.AddFault(is_write, NowNs() - start_ns);
+        }
+    };
     if (readback_offload && !assume_locks && OffloadReadback(device_addr, size, is_write)) {
         return;
     }
@@ -157,6 +266,7 @@ u64 BufferCache::CollectDownloads(const Buffer* arena, VAddr device_addr, u64 si
                                   DownloadCopies& copies) {
     u64 total_size_bytes = 0;
     const VAddr arena_base = arena->cpu_addr;
+    std::unique_lock lk{gpu_ranges_mutex};
     memory_tracker->ForEachDownloadRange<false>(device_addr, size, [&](u64 address, u64 size) {
         const auto add_download = [&](VAddr start, VAddr end) {
             const u64 new_offset = start - arena_base;
@@ -178,15 +288,21 @@ u64 BufferCache::CollectDownloads(const Buffer* arena, VAddr device_addr, u64 si
 }
 
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
+    DownloadCopies copies;
+    const VAddr arena_base = arena->cpu_addr;
+    u64 total_size_bytes = 0;
     if (readback_offload) {
         // A pending readback owns the GPU modified pages of its window until it finishes.
         std::unique_lock lk{readback_mutex};
         readback_cv.wait(lk, [&] { return !IsReadbackPending(device_addr, size); });
         MergeReadbackReturns();
+        total_size_bytes = CollectDownloads(arena, device_addr, size, copies);
+        if (total_size_bytes != 0) {
+            inflight_downloads.emplace_back(device_addr, size);
+        }
+    } else {
+        total_size_bytes = CollectDownloads(arena, device_addr, size, copies);
     }
-    DownloadCopies copies;
-    const VAddr arena_base = arena->cpu_addr;
-    const u64 total_size_bytes = CollectDownloads(arena, device_addr, size, copies);
     if (total_size_bytes == 0) {
         return;
     }
@@ -204,17 +320,27 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
                                 copy.size);
     }
     memory_tracker->UnmarkRegionAsGpuModified(device_addr, size, false);
+    if (readback_offload) {
+        std::scoped_lock lk{readback_mutex};
+        std::erase(inflight_downloads, std::pair<VAddr, u64>{device_addr, size});
+    }
 }
 
-struct BufferCache::Readback {
-    VAddr window{};
-    DownloadCopies copies{};
-    Vulkan::StagingBufferRef staging{};
-    VAddr arena_base{};
-    u64 write_seq{};
-    u64 tick{};
-    bool busy{};
-};
+bool BufferCache::WaitPendingReadback(VAddr window, VAddr device_addr, u64 size, bool is_write) {
+    {
+        std::unique_lock lk{readback_mutex};
+        if (!IsReadbackPending(window, READBACK_WINDOW_SIZE)) {
+            return false;
+        }
+        readback_cv.wait(lk, [&] { return !IsReadbackPending(window, READBACK_WINDOW_SIZE); });
+    }
+    if (is_write) {
+        bool resolved = true;
+        memory_tracker->InvalidateRegion(device_addr, size, [&resolved] { resolved = false; });
+        return resolved;
+    }
+    return !memory_tracker->IsRegionGpuModified(device_addr, size);
+}
 
 bool BufferCache::OffloadReadback(VAddr device_addr, u64 size, bool is_write) {
     const VAddr window = Common::AlignDown(device_addr, READBACK_WINDOW_SIZE);
@@ -234,6 +360,9 @@ bool BufferCache::OffloadReadback(VAddr device_addr, u64 size, bool is_write) {
     // which copies and unmarks in one GPU thread command.
     u32 attempts = 0;
     while (attempts < 2) {
+        if (WaitPendingReadback(window, device_addr, size, is_write)) {
+            return true;
+        }
         Readback job{.window = window};
         liverpool->SendCommand<true>([this, &job] { RecordReadback(job); });
         if (job.busy) {
@@ -261,18 +390,19 @@ bool BufferCache::OffloadReadback(VAddr device_addr, u64 size, bool is_write) {
 }
 
 void BufferCache::RecordReadback(Readback& job) {
+    if (prefetch) {
+        hot_windows[job.window] = NowNs();
+    }
+    const u64 block = job.window >> block_shift;
+    const auto* arena = GetArena(block, block);
     {
         std::scoped_lock lk{readback_mutex};
         if (IsReadbackPending(job.window, READBACK_WINDOW_SIZE)) {
             job.busy = true;
             return;
         }
-        MergeReadbackReturns();
     }
-    const u64 block = job.window >> block_shift;
-    const auto* arena = GetArena(block, block);
-    const u64 total_size_bytes =
-        CollectDownloads(arena, job.window, READBACK_WINDOW_SIZE, job.copies);
+    const u64 total_size_bytes = ClaimReadbackWindow(arena, job.window, job.copies);
     if (total_size_bytes == 0) {
         return;
     }
@@ -286,8 +416,81 @@ void BufferCache::RecordReadback(Readback& job) {
     runtime.CopyBuffer(arena, job.staging.buffer, job.copies);
     job.tick = scheduler.CurrentTick();
     scheduler.Flush();
+}
+
+u64 BufferCache::ClaimReadbackWindow(const Buffer* arena, VAddr window, DownloadCopies& copies) {
     std::scoped_lock lk{readback_mutex};
-    pending_readbacks.push_back(job.window);
+    if (IsReadbackPending(window, READBACK_WINDOW_SIZE)) {
+        return 0;
+    }
+    MergeReadbackReturns();
+    const u64 total_size_bytes = CollectDownloads(arena, window, READBACK_WINDOW_SIZE, copies);
+    if (total_size_bytes != 0) {
+        pending_readbacks.push_back(window);
+        for (const auto& copy : copies) {
+            pending_ranges.emplace_back(arena->cpu_addr + copy.srcOffset, copy.size);
+        }
+    }
+    return total_size_bytes;
+}
+
+void BufferCache::PrefetchReadbacks() {
+    if (!prefetch || hot_windows.empty()) {
+        return;
+    }
+    const s64 now = NowNs();
+    const bool active = ReadbackFeaturesActive();
+    // Runs inside the submit, after the batch took its tick.
+    const u64 batch_tick = scheduler.CurrentTick() - 1;
+    for (auto it = hot_windows.begin(); it != hot_windows.end();) {
+        const VAddr window = it->first;
+        if (now - it->second > 1'000'000'000) {
+            it = hot_windows.erase(it);
+            continue;
+        }
+        ++it;
+        const auto write = window_write_tick.find(window);
+        if (!active || write == window_write_tick.end() || write->second != batch_tick) {
+            continue;
+        }
+        auto job = std::make_unique<Readback>(Readback{.window = window});
+        const u64 block = window >> block_shift;
+        const auto* arena = GetArena(block, block);
+        const u64 total_size_bytes = ClaimReadbackWindow(arena, window, job->copies);
+        if (total_size_bytes == 0) {
+            continue;
+        }
+        job->staging = staging_pool.Request(total_size_bytes, MemoryType::HostCached, 0, true);
+        for (auto& copy : job->copies) {
+            copy.dstOffset += job->staging.offset;
+        }
+        job->arena_base = arena->cpu_addr;
+        job->write_seq = memory_tracker->GpuWriteSeq(window, READBACK_WINDOW_SIZE);
+        job->tick = batch_tick;
+        runtime.CopyBuffer(arena, job->staging.buffer, job->copies);
+        {
+            std::scoped_lock lk{finisher_mutex};
+            finisher_jobs.push_back(std::move(job));
+        }
+        finisher_cv.notify_one();
+    }
+}
+
+bool BufferCache::IsGpuData(VAddr addr, u64 size) {
+    if (!readback_offload) {
+        return true;
+    }
+    const auto overlaps = [&](const std::pair<VAddr, u64>& range) {
+        return range.first < addr + size && addr < range.first + range.second;
+    };
+    std::scoped_lock lk{readback_mutex};
+    if (std::ranges::any_of(pending_ranges, overlaps) ||
+        std::ranges::any_of(readback_returns, overlaps) ||
+        std::ranges::any_of(inflight_downloads, overlaps)) {
+        return true;
+    }
+    std::shared_lock ranges_lk{gpu_ranges_mutex};
+    return gpu_modified_ranges.Intersects(addr, size);
 }
 
 void BufferCache::FinishReadback(const Readback& job) {
@@ -303,12 +506,16 @@ void BufferCache::FinishReadback(const Readback& job) {
         job.window, READBACK_WINDOW_SIZE, job.write_seq);
     {
         std::scoped_lock lk{readback_mutex};
+        job.vetoed = !unmarked;
         if (!unmarked) {
             for (const auto& copy : job.copies) {
                 readback_returns.emplace_back(job.arena_base + copy.srcOffset, copy.size);
             }
         }
         std::erase(pending_readbacks, job.window);
+        std::erase_if(pending_ranges, [&](const auto& range) {
+            return range.first >= job.window && range.first < job.window + READBACK_WINDOW_SIZE;
+        });
     }
     readback_cv.notify_all();
     // The staging pool belongs to the GPU thread.
@@ -322,6 +529,10 @@ bool BufferCache::IsReadbackPending(VAddr addr, u64 size) const {
 }
 
 void BufferCache::MergeReadbackReturns() {
+    if (readback_returns.empty()) {
+        return;
+    }
+    std::unique_lock lk{gpu_ranges_mutex};
     for (const auto& [addr, size] : readback_returns) {
         gpu_modified_ranges.Add(addr, size);
     }
@@ -346,7 +557,17 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     EnsureResident(arena, first_block, last_block);
     SynchronizeMemory(arena, device_addr, size, is_written, is_texel_buffer);
     if (is_written) {
-        gpu_modified_ranges.Add(device_addr, size);
+        {
+            std::unique_lock lk{gpu_ranges_mutex};
+            gpu_modified_ranges.Add(device_addr, size);
+        }
+        if (prefetch) {
+            const u64 tick = scheduler.CurrentTick();
+            for (VAddr window = Common::AlignDown(device_addr, READBACK_WINDOW_SIZE);
+                 window < device_addr + size; window += READBACK_WINDOW_SIZE) {
+                window_write_tick[window] = tick;
+            }
+        }
     }
     return {arena, arena->Offset(device_addr)};
 }

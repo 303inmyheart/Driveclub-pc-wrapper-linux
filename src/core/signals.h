@@ -17,6 +17,7 @@ namespace Core {
 
 using AccessViolationHandler = bool (*)(void* context, void* fault_address);
 using IllegalInstructionHandler = bool (*)(void* context);
+using SingleStepHandler = bool (*)(void* context);
 
 #ifndef _WIN32
 void SignalHandler(int sig, siginfo_t* info, void* raw_context);
@@ -40,6 +41,16 @@ public:
         illegal_instruction_handlers.emplace(handler, priority);
     }
 
+    /// Registers a handler for single-step traps (Windows).
+    void RegisterSingleStepHandler(const SingleStepHandler& handler) {
+        single_step_handler = handler;
+    }
+
+    /// Dispatches a single-step trap, returning whether it was handled.
+    bool DispatchSingleStep(void* context) const {
+        return single_step_handler && single_step_handler(context);
+    }
+
     /// Dispatches an access violation signal, returning whether it was successfully handled.
     bool DispatchAccessViolation(void* context, void* fault_address) const;
 
@@ -58,6 +69,7 @@ private:
     };
     std::set<HandlerEntry<AccessViolationHandler>> access_violation_handlers;
     std::set<HandlerEntry<IllegalInstructionHandler>> illegal_instruction_handlers;
+    SingleStepHandler single_step_handler{};
 
 #ifdef _WIN32
     void* handle{};

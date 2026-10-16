@@ -197,6 +197,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     }
 
     scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
+        buffer_cache.PrefetchReadbacks();
         runtime.FlushBarriers();
         buffer_cache.SubmitPendingArenaBinds(info);
     });

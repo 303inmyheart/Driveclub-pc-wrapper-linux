@@ -81,6 +81,12 @@ public:
     bool InvalidateMemory(VAddr addr, u64 size, bool assume_locks = false);
     bool TryCpWriteBacking(VAddr addr, const void* data, u64 size);
     bool ReadMemory(VAddr addr, u64 size, bool assume_locks = false);
+    /// True when a guest read of [addr, addr + size) faults only because its page is GPU
+    /// modified: the bytes themselves are current in guest memory.
+    bool IsReadOfCpuDataOnGpuPage(VAddr addr, u64 size) {
+        return IsMapped(addr, size) && buffer_cache.IsRegionGpuModified(addr, size) &&
+               !buffer_cache.IsGpuData(addr, size);
+    }
     bool IsMapped(VAddr addr, u64 size);
     void MapMemory(VAddr addr, u64 size);
     void RegisterMemory(VAddr addr, u64 size);
