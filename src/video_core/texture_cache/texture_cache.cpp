@@ -431,6 +431,7 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         if (new_image_id) {
             // A parked alias starts over like a new image; its Vulkan layout state stays valid.
             slot_images[new_image_id].flags = ImageFlagBits::Dirty;
+            slot_images[new_image_id].RenewIdentity();
             slot_images[new_image_id].MarkFastStateDirty();
         } else {
             new_image_id = slot_images.Insert(instance, runtime, slot_image_views, new_info);

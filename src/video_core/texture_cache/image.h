@@ -119,6 +119,15 @@ struct Image : public Common::LRUNode<> {
         depth_uid = {};
     }
 
+    /// driveclub-pc: a parked depth/colour alias reused by the texture cache must look new to
+    /// every uid-keyed cache (draw memos, depth links) and carry no stale binding state.
+    void RenewIdentity() {
+        image_uid = global_image_uid.Next();
+        DisassociateDepth();
+        binding = {};
+        tick_accessed_last = 0;
+    }
+
     ImageView& FindView(const ImageViewInfo& view_info, bool ensure_guest_samples = true);
     vk::ImageView FindViewHandle(const ImageViewInfo& view_info, bool ensure_guest_samples = true);
     ImageViewId InsertView(const ImageViewInfo& view_info);
