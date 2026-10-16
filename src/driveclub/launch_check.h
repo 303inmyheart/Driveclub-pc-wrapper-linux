@@ -27,7 +27,7 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
 bool ValidateSysModules(std::string& error);
 
 // Writes the Driveclub per-game settings once, when the user has none: the GPU readback settings
-// selected by the owner (Relaxed/readbacks_mode=1, readback_offload=true), FSR 1 + RCAS, and
+// recommended for the game (Precise/readbacks_mode=2, readback_offload=true), FSR 1 + RCAS, and
 // borderless fullscreen at the primary display's resolution.
 void EnsureDefaultGameConfig();
 

@@ -1359,6 +1359,8 @@ add_executable(shadps4
     src/driveclub/vk_call_stats.h
     src/driveclub/guest_stats.cpp
     src/driveclub/guest_stats.h
+    src/driveclub/stats_trigger.cpp
+    src/driveclub/stats_trigger.h
     src/driveclub/vkcmd_list.inc
     src/driveclub/image_recycler.cpp
     src/driveclub/image_recycler.h

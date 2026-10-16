@@ -19,6 +19,7 @@
 #include "common/rdtsc.h"
 #include "common/thread.h"
 #include "driveclub/vk_call_stats.h"
+#include "driveclub/stats_trigger.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace DriveclubPC::VkCallStats {
@@ -264,17 +265,26 @@ void TakeFrame(u64& cp_calls, double& cp_ms, double& other_ms) {
     g_frame_cp_ticks = cp_ticks;
     g_frame_other_ticks = other_ticks;
 
-    if (g_window_from < 0 || g_window_state == 2) {
+    if (g_window_state == 2 || (g_window_from < 0 && !StatsTrigger::Configured())) {
         return;
     }
     const double now_s =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - g_install_time).count();
-    if (g_window_state == 0 && now_s >= g_window_from) {
+    bool begin = now_s >= g_window_from;
+    bool end = now_s >= g_window_to;
+    if (StatsTrigger::Configured()) {
+        const auto trigger = StatsTrigger::Poll();
+        begin = trigger != StatsTrigger::State::Waiting;
+        end = trigger == StatsTrigger::State::Stopped;
+    }
+    if (g_window_state == 0 && begin) {
+        g_window_state = end ? 2 : 1;
+        g_window_from = now_s;
         g_window_start = Take();
         g_window_frames = 0;
-        g_window_state = 1;
     } else if (g_window_state == 1) {
-        if (now_s >= g_window_to) {
+        if (end) {
+            g_window_to = now_s;
             WriteWindowReport();
             g_window_state = 2;
         } else {
