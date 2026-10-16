@@ -23,7 +23,8 @@ Entertainment, Evolution Studios, the shadPS4 team or the GR2fork author. "PlayS
   starts from. Its original README is kept as [README-GR2fork.md](README-GR2fork.md).
 - **[SMAA](https://github.com/iryoku/smaa)** by Jorge Jimenez et al. (MIT), used for the optional
   SMAA anti-aliasing. See [driveclub-pc/SMAA-LICENSE.txt](driveclub-pc/SMAA-LICENSE.txt).
-- **FXAA** (NVIDIA, Timothy Lottes) and **AMD FidelityFX FSR 1**, as included in the code they came with.
+- **AMD FidelityFX FSR 1**, already present in shadPS4, used for upscaling. The FXAA pass is this
+  fork's own implementation of the FXAA technique (originally by Timothy Lottes, NVIDIA).
 - All third-party libraries under `externals/` (git submodules), each under its own licence.
 
 ## What this fork changes
