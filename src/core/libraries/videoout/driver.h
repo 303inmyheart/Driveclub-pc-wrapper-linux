@@ -110,11 +110,14 @@ private:
     void DrawLastFrame();  // Used when there is no flip request
     void SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop = false);
     void PresentThread(std::stop_token token);
+    void FlipThread(std::stop_token token);
 
     std::mutex mutex;
     VideoOutPort main_port{};
     std::jthread present_thread;
     std::queue<Request> requests;
+    std::condition_variable_any flip_cv;
+    std::jthread flip_thread; ///< driveclub-pc: last, so it stops before the members it uses
 };
 
 } // namespace Libraries::VideoOut

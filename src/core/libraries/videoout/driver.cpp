@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include "driveclub/frame_rate.h"
 #include "common/assert.h"
 #include "common/debug.h"
@@ -49,6 +50,12 @@ VideoOutDriver::VideoOutDriver(u32 width, u32 height) {
     main_port.resolution.pane_width = width;
     main_port.resolution.pane_height = height;
     present_thread = std::jthread([&](std::stop_token token) { PresentThread(token); });
+    // driveclub-pc: with a flip interval (target frame rate on the fine vblank grid) flips are
+    // presented by their own thread as soon as they arrive and are due, instead of on the
+    // next vblank tick; the vblank thread then only counts vblanks and signals their events.
+    if (DriveclubPC::FrameRate::MinFlipIntervalNs() != 0) {
+        flip_thread = std::jthread([&](std::stop_token token) { FlipThread(token); });
+    }
 }
 
 VideoOutDriver::~VideoOutDriver() = default;
@@ -240,8 +247,18 @@ void VideoOutDriver::Flip(const Request& req) {
     // Update HDR status before presenting.
     presenter->SetHDR(req.port->is_hdr);
 
-    // Present the frame.
-    presenter->Present(req.frame);
+    // driveclub-pc: the flip takes effect now, before the host presents it. The frame was
+    // already copied out of the guest buffer when it was prepared on the GPU thread, so the
+    // previous buffer can be handed back to the game here; waiting for Present() (scaling,
+    // vkQueuePresent) made the game's next frame wait for host work (~1.3 ms at 120 FPS,
+    // docs/parallel-gpu-design.md §3f). DCPC_FLIP_AFTER_PRESENT=1 restores the old order.
+    static const bool flip_after_present = [] {
+        const char* env = std::getenv("DCPC_FLIP_AFTER_PRESENT");
+        return env != nullptr && std::atoi(env) != 0;
+    }();
+    if (flip_after_present) {
+        presenter->Present(req.frame);
+    }
 
     // Update flip status.
     auto* port = req.port;
@@ -278,6 +295,10 @@ void VideoOutDriver::Flip(const Request& req) {
     }
     // save to prev buf index
     port->prev_index = req.index;
+
+    if (!flip_after_present) {
+        presenter->Present(req.frame);
+    }
 }
 
 void VideoOutDriver::DrawBlankFrame() {
@@ -329,14 +350,65 @@ void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_
         frame = presenter->PrepareFrame(group, buffer.address_left);
     }
 
-    std::scoped_lock lock{mutex};
-    requests.push({
-        .frame = frame,
-        .port = port,
-        .flip_arg = flip_arg,
-        .index = index,
-        .eop = is_eop,
-    });
+    {
+        std::scoped_lock lock{mutex};
+        requests.push({
+            .frame = frame,
+            .port = port,
+            .flip_arg = flip_arg,
+            .index = index,
+            .eop = is_eop,
+        });
+    }
+    flip_cv.notify_one();
+}
+
+void VideoOutDriver::FlipThread(std::stop_token token) {
+    Common::SetCurrentThreadName("dcpc:Flip");
+    Common::SetCurrentThreadPriority(Common::ThreadPriority::High);
+    const auto interval = std::chrono::nanoseconds(DriveclubPC::FrameRate::MinFlipIntervalNs());
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point next_flip{};
+    Clock::time_point last_present = Clock::now();
+    while (!token.stop_requested()) {
+        Request request{};
+        {
+            std::unique_lock lock{mutex};
+            flip_cv.wait_for(lock, token, std::chrono::milliseconds(5),
+                             [this] { return !requests.empty(); });
+            if (token.stop_requested()) {
+                break;
+            }
+            if (!requests.empty()) {
+                request = requests.front();
+                requests.pop();
+            }
+        }
+        if (!request) {
+            // No new frame: keep the window alive (port closed, overlays, pause) at ~60 Hz.
+            if (Clock::now() - last_present >= std::chrono::milliseconds(16)) {
+                if (!main_port.is_open) {
+                    DrawBlankFrame();
+                    last_present = Clock::now();
+                } else if (ImGui::Core::MustKeepDrawing() || DebugState.IsGuestThreadsPaused()) {
+                    DrawLastFrame();
+                    last_present = Clock::now();
+                }
+            }
+            continue;
+        }
+        // Frame-rate limit: the next flip is due one interval after the previous one was due,
+        // so the average rate matches the target; after a late frame the schedule restarts.
+        const auto now = Clock::now();
+        if (now < next_flip) {
+            Common::AccurateSleep(next_flip - now, nullptr, false);
+        }
+        const auto flipped = Clock::now();
+        next_flip = flipped > next_flip + interval / 2 ? flipped + interval : next_flip + interval;
+        Flip(request);
+        last_present = Clock::now();
+        FRAME_END;
+    }
 }
 
 void VideoOutDriver::PresentThread(std::stop_token token) {
@@ -360,10 +432,13 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         return {};
     };
 
+    const bool own_flip_thread = min_flip_interval_ns != 0;
     while (!token.stop_requested()) {
         timer.Start();
 
-        if (DebugState.IsGuestThreadsPaused()) {
+        if (own_flip_thread) {
+            // Flips and idle redraws are the flip thread's; only the vblank below runs here.
+        } else if (DebugState.IsGuestThreadsPaused()) {
             DrawLastFrame();
             timer.End();
             continue;
@@ -379,7 +454,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                                                 std::chrono::steady_clock::now().time_since_epoch())
                                                 .count());
         const bool interval_ok = min_flip_interval_ns == 0 || now_ns + 300'000 >= next_flip_ns;
-        if (vblank_status.count % (flip_rate + 1) == 0 && interval_ok) {
+        if (!own_flip_thread && vblank_status.count % (flip_rate + 1) == 0 && interval_ok) {
             const auto request = receive_request();
             if (!request) {
                 if (timer.GetTotalWait().count() < 0) { // Dont draw too fast
