@@ -263,6 +263,8 @@ static void* RunThread(void* arg) {
         Common::SetCurrentThreadAffinityMask(~strip);
     }
     DebugState.AddCurrentThreadToGuestList();
+    // driveclub-pc: apply after the reservation exclusion, which otherwise widens the mask.
+    Common::PinPerformanceThread(curthread->name.c_str());
     Core::InitializeTLS();
 
     curthread->native_thr->Initialize();

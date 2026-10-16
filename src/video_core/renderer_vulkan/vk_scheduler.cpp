@@ -7,6 +7,7 @@
 #include "common/thread.h"
 #include "core/emulator_settings.h"
 #include "driveclub/deferred_recording.h"
+#include "driveclub/frame_profiler.h"
 #include "imgui/renderer/texture_manager.h"
 #include "video_core/buffer_cache/stream_copy_lane.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -243,6 +244,8 @@ void Scheduler::EndSession() {
 }
 
 void Scheduler::SubmitExecution(SubmitInfo& info) {
+    // driveclub-pc: actual scheduler submits, including readback-induced ones.
+    DriveclubPC::Profiler::CostScope cost{DriveclubPC::Profiler::Cost::Submit};
     std::scoped_lock lk{submit_mutex};
     // Every submit of this scheduler runs on the GPU command thread, which is
     // where the hook's state lives.

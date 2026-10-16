@@ -24,7 +24,8 @@
 //   waits                 number of blocked waits that completed in the frame
 //   backoffs              command processor backoff steps taken while every task was blocked
 //   gfx_wait_late_ms      graphics wait time where the queue that writes the awaited label received
-//                         a new submission from the game *after* the wait began (game submitted late)
+//                         a new submission from the game *after* the wait began (game submitted
+//                         late)
 //   gfx_wait_queued_ms    graphics wait time where it did not (the work was already queued)
 // Every 600 frames the command processor also logs the wait addresses with the most time and which
 // game threads submitted to which queue.
@@ -93,5 +94,18 @@ void Trace(TraceKind kind, u64 address, u32 queue);
 void TraceGpuWrite(u64 address, u32 queue);
 
 u64 NowNs();
+
+// driveclub-pc: inclusive CPU timings; *_cp_ms isolates the command processor thread.
+enum class Cost : u8 { Submit, ReadbackRecord, Download, ReadbackFlush, Protect, Count };
+void MarkCommandProcessorThread();
+class CostScope {
+public:
+    explicit CostScope(Cost cost);
+    ~CostScope();
+
+private:
+    Cost cost;
+    u64 start;
+};
 
 } // namespace DriveclubPC::Profiler

@@ -23,6 +23,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+// windows.h must precede the control and shell headers.
 #include <commctrl.h>
 #include <shobjidl.h>
 #pragma comment(lib, "comctl32.lib")
@@ -44,6 +45,10 @@ struct Settings {
     bool fsr = true;
     int sharpening = 1; ///< 0 off, 1 normal, 2 strong
     int readbacks = 2;  ///< GPU readbacks: 0 off, 1 relaxed, 2 precise
+    // driveclub-pc: image quality and hybrid CPU settings.
+    int af = 0;
+    int aa = 0;
+    bool pcore_pin = true;
     bool show_fps = false;
     bool deferred_recording = false;
     bool classic_vblank = false;
@@ -84,6 +89,11 @@ Settings Load() {
     s.fsr = num("fsr", s.fsr) != 0;
     s.sharpening = std::clamp(num("sharpening", s.sharpening), 0, 2);
     s.readbacks = std::clamp(num("readbacks", s.readbacks), 0, 2);
+    s.af = num("af", 0);
+    if (s.af != 2 && s.af != 4 && s.af != 8 && s.af != 16)
+        s.af = 0;
+    s.aa = std::clamp(num("aa", 0), 0, 2);
+    s.pcore_pin = num("pcore_pin", 1) != 0;
     s.show_fps = num("show_fps", s.show_fps) != 0;
     s.deferred_recording = num("deferred_recording", s.deferred_recording) != 0;
     s.classic_vblank = num("classic_vblank", s.classic_vblank) != 0;
@@ -105,6 +115,9 @@ void Save(const Settings& s) {
         << "fsr=" << int(s.fsr) << "\n"
         << "sharpening=" << s.sharpening << "\n"
         << "readbacks=" << s.readbacks << "\n"
+        << "af=" << s.af << "\n"
+        << "aa=" << s.aa << "\n"
+        << "pcore_pin=" << int(s.pcore_pin) << "\n"
         << "show_fps=" << int(s.show_fps) << "\n"
         << "deferred_recording=" << int(s.deferred_recording) << "\n"
         << "classic_vblank=" << int(s.classic_vblank) << "\n"
@@ -165,6 +178,9 @@ void SetEnvDefault(const char* name, const std::string& value) {
 }
 
 void ApplyRuntime(const Settings& s) {
+    SetEnvDefault("DCPC_AF", std::to_string(s.af));
+    SetEnvDefault("DCPC_AA", std::to_string(s.aa));
+    SetEnvDefault("DCPC_PCORE_PIN", s.pcore_pin ? "1" : "0");
     SetEnvDefault("DCPC_TARGET_FPS", std::to_string(s.target_fps));
     SetEnvDefault("DCPC_DEFERRED_RECORDING", s.deferred_recording ? "1" : "0");
     SetEnvDefault("DCPC_CLASSIC_VBLANK", s.classic_vblank ? "1" : "0");
@@ -213,6 +229,9 @@ enum Id : int {
     IdUpscaling,
     IdSharpening,
     IdReadbacks,
+    IdAf,
+    IdAa,
+    IdPcore,
     IdShowFps,
     IdDeferred,
     IdClassic,
@@ -344,6 +363,10 @@ void CollectSettings() {
     s.fsr = ComboIndex(IdUpscaling) == 0;
     s.sharpening = std::clamp(ComboIndex(IdSharpening), 0, 2);
     s.readbacks = 2 - std::clamp(ComboIndex(IdReadbacks), 0, 2);
+    static constexpr int af_values[] = {0, 2, 4, 8, 16};
+    s.af = af_values[std::clamp(ComboIndex(IdAf), 0, 4)];
+    s.aa = std::clamp(ComboIndex(IdAa), 0, 2);
+    s.pcore_pin = Checked(IdPcore);
     s.show_fps = Checked(IdShowFps);
     s.deferred_recording = Checked(IdDeferred);
     s.classic_vblank = Checked(IdClassic);
@@ -431,12 +454,28 @@ void BuildControls() {
     Combo(IdSharpening, C, y, W, {L"Off", L"Normal (RCAS)", L"Strong (RCAS)"}, s.sharpening);
     y += Row;
 
+    Label(L"Anisotropic filter", L, y, 140);
+    Combo(IdAf, C, y, W, {L"Off (game setting)", L"2x", L"4x", L"8x", L"16x"},
+          s.af == 16  ? 4
+          : s.af == 8 ? 3
+          : s.af == 4 ? 2
+          : s.af == 2 ? 1
+                      : 0);
+    y += Row;
+    Label(L"Anti-aliasing", L, y, 140);
+    Combo(IdAa, C, y, W, {L"Off (default)", L"FXAA", L"SMAA 1x (High)"}, s.aa);
+    y += Row;
+
     Label(L"GPU readbacks", L, y, 140);
     Combo(IdReadbacks, C, y, W,
           {L"Precise (recommended)", L"Relaxed (faster)", L"Off (fastest, effects may break)"},
           2 - s.readbacks);
     y += Row + 6;
 
+    Make(L"BUTTON", L"Prefer performance cores (hybrid CPUs)", BS_AUTOCHECKBOX | WS_TABSTOP, C, y,
+         W, 22, IdPcore);
+    SendMessageW(ui.controls[IdPcore], BM_SETCHECK, s.pcore_pin ? BST_CHECKED : BST_UNCHECKED, 0);
+    y += 26;
     Make(L"BUTTON", L"Show FPS counter", BS_AUTOCHECKBOX | WS_TABSTOP, C, y, W, 22, IdShowFps);
     SendMessageW(ui.controls[IdShowFps], BM_SETCHECK, s.show_fps ? BST_CHECKED : BST_UNCHECKED, 0);
     y += 26;
@@ -490,7 +529,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         SetTextColor(dc, RGB(90, 90, 90));
         RECT r2{Px(24), Px(44), Px(600), Px(64)};
         DrawTextW(dc,
-                  L"PS4 Driveclub (CUSA00093). Settings and saves: the 'user' folder next to the program.",
+                  L"PS4 Driveclub (CUSA00093). Settings and saves: the 'user' folder next to the "
+                  L"program.",
                   -1, &r2, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
         SelectObject(dc, old);
         if (msg == WM_PAINT) {
@@ -566,7 +606,7 @@ bool ShowWindow(Settings& s) {
     wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
     RegisterClassExW(&wc);
 
-    RECT rect{0, 0, Px(600), Px(596)};
+    RECT rect{0, 0, Px(600), Px(694)};
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     AdjustWindowRectExForDpi(&rect, style, FALSE, 0, GetDpiForSystem());
     const int w = rect.right - rect.left, h = rect.bottom - rect.top;

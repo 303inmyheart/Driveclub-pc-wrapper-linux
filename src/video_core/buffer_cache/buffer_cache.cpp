@@ -15,6 +15,7 @@
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/threads/exception.h"
 #include "core/memory.h"
+#include "driveclub/frame_profiler.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
@@ -288,6 +289,8 @@ u64 BufferCache::CollectDownloads(const Buffer* arena, VAddr device_addr, u64 si
 }
 
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
+    // driveclub-pc: inclusive cost, including synchronous GPU waits.
+    DriveclubPC::Profiler::CostScope cost{DriveclubPC::Profiler::Cost::Download};
     DownloadCopies copies;
     const VAddr arena_base = arena->cpu_addr;
     u64 total_size_bytes = 0;
@@ -311,7 +314,10 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
         copy.dstOffset += download.offset;
     }
     runtime.CopyBuffer(arena, download.buffer, copies);
-    scheduler.Finish();
+    {
+        DriveclubPC::Profiler::CostScope flush{DriveclubPC::Profiler::Cost::ReadbackFlush};
+        scheduler.Finish();
+    }
 
     download.buffer->Invalidate(download.offset, download.size);
     for (const auto& copy : copies) {
@@ -390,6 +396,8 @@ bool BufferCache::OffloadReadback(VAddr device_addr, u64 size, bool is_write) {
 }
 
 void BufferCache::RecordReadback(Readback& job) {
+    // driveclub-pc: cost on the command processor, excluding the offloaded wait.
+    DriveclubPC::Profiler::CostScope cost{DriveclubPC::Profiler::Cost::ReadbackRecord};
     if (prefetch) {
         hot_windows[job.window] = NowNs();
     }
@@ -415,6 +423,7 @@ void BufferCache::RecordReadback(Readback& job) {
     job.write_seq = memory_tracker->GpuWriteSeq(job.window, READBACK_WINDOW_SIZE);
     runtime.CopyBuffer(arena, job.staging.buffer, job.copies);
     job.tick = scheduler.CurrentTick();
+    DriveclubPC::Profiler::CostScope flush{DriveclubPC::Profiler::Cost::ReadbackFlush};
     scheduler.Flush();
 }
 

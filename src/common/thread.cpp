@@ -54,6 +54,80 @@
 
 namespace Common {
 
+// driveclub-pc: CPU sets describe hybrid topology without assuming logical CPU numbering.
+void PinPerformanceThread(const char* name) {
+#ifdef _WIN32
+    if (std::string_view{name} != "Game:Main" &&
+        std::string_view{name} != "shadPS4:GpuCommandProcessor") {
+        return;
+    }
+    const char* env = std::getenv("DCPC_PCORE_PIN");
+    if (env && env[0] == '0') {
+        return;
+    }
+    struct Topology {
+        u64 mask = 0;
+    };
+    static const Topology topology = [] {
+        Topology result;
+        ULONG bytes = 0;
+        GetSystemCpuSetInformation(nullptr, 0, &bytes, GetCurrentProcess(), 0);
+        if (!bytes) {
+            return result;
+        }
+        std::vector<std::byte> data(bytes);
+        if (!GetSystemCpuSetInformation(reinterpret_cast<PSYSTEM_CPU_SET_INFORMATION>(data.data()),
+                                        bytes, &bytes, GetCurrentProcess(), 0)) {
+            return result;
+        }
+        BYTE lowest = 255, highest = 0;
+        for (size_t offset = 0; offset + sizeof(SYSTEM_CPU_SET_INFORMATION) <= bytes;) {
+            const auto* info =
+                reinterpret_cast<const SYSTEM_CPU_SET_INFORMATION*>(data.data() + offset);
+            if (info->Size == 0 || offset + info->Size > bytes) {
+                break;
+            }
+            if (info->Type == CpuSetInformation && info->CpuSet.Group == 0 &&
+                info->CpuSet.LogicalProcessorIndex < 64) {
+                const BYTE efficiency = info->CpuSet.EfficiencyClass;
+                lowest = std::min(lowest, efficiency);
+                if (efficiency > highest) {
+                    highest = efficiency;
+                    result.mask = 0;
+                }
+                if (efficiency == highest &&
+                    (!info->CpuSet.Allocated || info->CpuSet.AllocatedToTargetProcess)) {
+                    result.mask |= 1ULL << info->CpuSet.LogicalProcessorIndex;
+                }
+            }
+            offset += info->Size;
+        }
+        if (highest == lowest) {
+            result.mask = 0; // homogeneous hosts keep the existing scheduler policy
+        }
+        LOG_INFO(Common, "driveclub-pc: performance CPU mask={:#x}, efficiency classes {}..{}",
+                 result.mask, lowest, highest);
+        return result;
+    }();
+    DWORD_PTR process_mask = 0, system_mask = 0;
+    if (!topology.mask ||
+        !GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask)) {
+        return;
+    }
+    u64 mask = topology.mask & process_mask;
+    const u64 reserved = GetReservedCoreMask();
+    if (std::string_view{name} == "Game:Main") {
+        mask &= ~GetExclusionStripMask();
+    } else if (reserved & mask) {
+        mask &= reserved;
+    }
+    if (mask) {
+        const bool ok = SetCurrentThreadAffinityMask(mask);
+        LOG_INFO(Common, "driveclub-pc: P-core pin '{}' mask={:#x}, success={}", name, mask, ok);
+    }
+#endif
+}
+
 #ifdef __APPLE__
 
 void SetCurrentThreadRealtime(const std::chrono::nanoseconds period_ns) {
@@ -194,6 +268,7 @@ void SetCurrentThreadName(const char* name) {
         Libraries::Kernel::g_curthread->name = name;
     }
     SetThreadDescription(GetCurrentThread(), UTF8ToUTF16W(name).data());
+    PinPerformanceThread(name);
 }
 
 void SetThreadName(void* thread, const char* name) {

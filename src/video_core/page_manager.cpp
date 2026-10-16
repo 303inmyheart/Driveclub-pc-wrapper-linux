@@ -655,6 +655,8 @@ struct SignalImpl : public PageManager::Impl {
         auto& impl = memory->GetAddressSpace();
         ASSERT_MSG(perms != Core::MemoryPermission::Write,
                    "Attempted to protect region as write-only which is not a valid permission");
+        // driveclub-pc: measure actual page-protection calls, not tracker bookkeeping.
+        DriveclubPC::Profiler::CostScope cost{DriveclubPC::Profiler::Cost::Protect};
         impl.Protect(address, size, perms);
     }
 

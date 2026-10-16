@@ -4,8 +4,8 @@
 #include <cstddef>
 #include <cstdlib>
 #include <thread>
-#include <immintrin.h>
 #include <boost/preprocessor/stringize.hpp>
+#include <immintrin.h>
 
 #include "common/assert.h"
 #include "common/debug.h"
@@ -17,14 +17,14 @@
 #include "core/libraries/videoout/driver.h"
 #include "core/memory.h"
 #include "core/platform.h"
+#include "driveclub/deferred_recording.h"
+#include "driveclub/frame_profiler.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/amdgpu/pm4_cmds.h"
 #include "video_core/buffer_cache/region_manager.h"
 #include "video_core/buffer_cache/stream_copy_lane.h"
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
-#include "driveclub/deferred_recording.h"
-#include "driveclub/frame_profiler.h"
 
 namespace AmdGpu {
 
@@ -354,6 +354,8 @@ static void CpBackoff(u32 round) {
 }
 
 void Liverpool::Process(std::stop_token stoken) {
+    // driveclub-pc: attribute inclusive readback/protection timings to this thread.
+    DriveclubPC::Profiler::MarkCommandProcessorThread();
     Common::SetCurrentThreadName("shadPS4:GpuCommandProcessor");
     gpu_id = std::this_thread::get_id();
 #ifdef __linux__
@@ -366,6 +368,7 @@ void Liverpool::Process(std::stop_token stoken) {
         Common::ExcludeReservedCoresFromAllOtherThreads();
         Common::StartPeriodicAffinityRewalk();
     }
+    Common::PinPerformanceThread("shadPS4:GpuCommandProcessor");
     // The only thread that spins on a contended tracker region lock.
     VideoCore::RegionLock::gpu_spin_rounds = EmulatorSettings.GetTrackerLockSpinRounds();
 

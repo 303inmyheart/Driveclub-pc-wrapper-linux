@@ -57,6 +57,12 @@ struct CpCounters {
 };
 
 SharedCounters g_shared;
+// driveclub-pc: only touched when profiling is enabled.
+struct CostCounters {
+    std::atomic<u64> count{}, ns{}, cp_ns{};
+};
+std::array<CostCounters, static_cast<size_t>(Cost::Count)> g_costs;
+thread_local bool g_command_processor = false;
 CpCounters g_cp;
 std::atomic<int> g_enabled{-1}; // -1 = not decided yet
 std::atomic<u32> g_phase{0};
@@ -131,7 +137,12 @@ bool Decide() {
                          "frame,qpc_ms,frame_ms,cp_busy_ms,cp_idle_ms,sched_wait_ms,"
                          "present_wait_ms,pipelines,pipeline_ms,draws,dispatches,wait_gfx_ms,"
                          "wait_asc_ms,wait_gpu_label_ms,wait_cpu_label_ms,waits,backoffs,"
-                         "gfx_wait_late_ms,gfx_wait_queued_ms,phase\n");
+                         "gfx_wait_late_ms,gfx_wait_queued_ms,phase");
+            for (const char* name :
+                 {"submit", "readback_record", "download", "readback_flush", "protect"}) {
+                std::fprintf(g_writer.file, ",%s_count,%s_ms,%s_cp_ms", name, name, name);
+            }
+            std::fprintf(g_writer.file, "\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
             if (const char* at = std::getenv("DCPC_TRACE_AT")) {
                 g_trace_at_s = std::atof(at);
@@ -236,6 +247,25 @@ u64 NowNs() {
     return static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                 std::chrono::steady_clock::now().time_since_epoch())
                                 .count());
+}
+
+void MarkCommandProcessorThread() {
+    g_command_processor = true;
+}
+
+CostScope::CostScope(Cost cost) : cost{cost}, start{Enabled() ? NowNs() : 0} {}
+
+CostScope::~CostScope() {
+    if (!start) {
+        return;
+    }
+    auto& c = g_costs[static_cast<size_t>(cost)];
+    const u64 elapsed = NowNs() - start;
+    c.count.fetch_add(1, std::memory_order_relaxed);
+    c.ns.fetch_add(elapsed, std::memory_order_relaxed);
+    if (g_command_processor) {
+        c.cp_ns.fetch_add(elapsed, std::memory_order_relaxed);
+    }
 }
 
 void AddCpBusy(u64 ns) {
@@ -456,8 +486,9 @@ void OnGuestFrame() {
             : 0.0;
     std::fprintf(
         w.file,
-        "%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%.3f,%llu,%llu,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%.3f,%.3f,"
-        "%u\n",
+        "%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%llu,%.3f,%llu,%llu,%.3f,%.3f,%.3f,%.3f,%llu,%llu,%.3f,"
+        "%.3f,"
+        "%u",
         static_cast<unsigned long long>(w.frame), QpcMs(), frame_ms, Ms(Take(g_shared.cp_busy_ns)),
         Ms(Take(g_shared.cp_idle_ns)), sched_ms, Ms(Take(g_shared.present_wait_ns)),
         static_cast<unsigned long long>(Take(g_shared.pipelines)), Ms(Take(g_shared.pipeline_ns)),
@@ -469,6 +500,11 @@ void OnGuestFrame() {
         static_cast<unsigned long long>(Delta(g_cp.backoffs, w.backoffs)),
         Ms(Delta(g_cp.gfx_late_ns, w.gfx_late)), Ms(Delta(g_cp.gfx_queued_ns, w.gfx_queued)),
         g_phase.load(std::memory_order_relaxed));
+    for (auto& c : g_costs) {
+        std::fprintf(w.file, ",%llu,%.3f,%.3f", static_cast<unsigned long long>(Take(c.count)),
+                     Ms(Take(c.ns)), Ms(Take(c.cp_ns)));
+    }
+    std::fprintf(w.file, "\n");
     ++w.frame;
     g_frames.store(w.frame, std::memory_order_relaxed);
     if ((w.frame & 63) == 0) {

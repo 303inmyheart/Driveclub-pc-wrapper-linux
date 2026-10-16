@@ -10,6 +10,7 @@
 #include "core/devtools/layer.h"
 #include "core/emulator_settings.h"
 #include "core/libraries/system/systemservice.h"
+#include "driveclub/frame_profiler.h"
 #include "imgui/friends_layer.h"
 #include "imgui/invitation_prompt_layer.h"
 #include "imgui/notifications_layer.h"
@@ -23,7 +24,6 @@
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/texture_cache/image.h"
-#include "driveclub/frame_profiler.h"
 
 #include <algorithm>
 #include <array>
@@ -143,12 +143,15 @@ struct ScreenshotReadback {
     u32 height{};
     vk::Format format{};
     bool hdr_encoded{};
+    bool linear_encoded{}; // driveclub-pc: floating-point AA screenshots may need sRGB encoding
 
     ScreenshotReadback(const Instance& instance, ScreenshotKind kind_,
                        std::vector<std::filesystem::path> paths_, const u32 width_,
                        const u32 height_, const vk::Format format_, const bool hdr_encoded_)
         : kind{kind_}, paths{std::move(paths_)},
-          buffer{instance, 0, static_cast<u64>(width_) * static_cast<u64>(height_) * 4,
+          buffer{instance, 0,
+                 static_cast<u64>(width_) * static_cast<u64>(height_) *
+                     (format_ == vk::Format::eR16G16B16A16Sfloat ? 8 : 4),
                  VideoCore::MemoryType::HostCached},
           width{width_}, height{height_}, format{format_}, hdr_encoded{hdr_encoded_} {}
 };
@@ -295,6 +298,30 @@ static bool ConvertReadbackToRgba8(const ScreenshotReadback& readback, std::vect
     out_rgba.resize(static_cast<size_t>(byte_size));
 
     switch (readback.format) {
+    // driveclub-pc: comparison images are captured after AA at internal resolution.
+    case vk::Format::eR16G16B16A16Sfloat: {
+        if (readback.buffer.mapped_data.size() < pixel_count * 8)
+            return false;
+        const auto* halves = reinterpret_cast<const u16*>(readback.buffer.mapped_data.data());
+        for (size_t i = 0; i < pixel_count; ++i) {
+            for (size_t c = 0; c < 3; ++c) {
+                const u16 half = halves[i * 4 + c];
+                const int exponent = (half >> 10) & 31;
+                const int mantissa = half & 1023;
+                float value = exponent == 0    ? std::ldexp(float(mantissa), -24)
+                              : exponent == 31 ? 0.0f
+                                               : std::ldexp(float(1024 + mantissa), exponent - 25);
+                if (half & 0x8000)
+                    value = -value;
+                if (readback.linear_encoded)
+                    value = LinearToSrgb(value);
+                out_rgba[i * 4 + c] =
+                    static_cast<u8>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
+            }
+            out_rgba[i * 4 + 3] = 255;
+        }
+        return true;
+    }
     case vk::Format::eR8G8B8A8Unorm:
     case vk::Format::eR8G8B8A8Srgb:
         std::memcpy(out_rgba.data(), src.data(), out_rgba.size());
@@ -491,6 +518,13 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
         static_cast<float>(EmulatorSettings.GetRcasAttenuation() / 1000.f);
 
     fsr_pass.Create(device, instance.GetAllocator(), num_images);
+    // driveclub-pc: environment override also supports the unattended harness.
+    if (const char* env = std::getenv("DCPC_AA")) {
+        aa_mode = std::clamp(std::atoi(env), 0, 2);
+    }
+    aa_pass.Create(device, instance.GetAllocator(), num_images);
+    LOG_INFO(Render_Vulkan, "driveclub-pc: post-process AA mode {} (0 Off / 1 FXAA / 2 SMAA)",
+             aa_mode);
     pp_pass.Create(device, swapchain.GetSurfaceFormat().format);
 
     ImGui::Layer::AddLayer(Common::Singleton<Core::Devtools::Layer>::Instance());
@@ -710,6 +744,12 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
 
     const u32 capture_game_only_count = VideoCore::ConsumeGameOnlyScreenshotRequests();
     std::optional<ScreenshotReadback> pending_screenshot;
+    // driveclub-pc: identical game frame, three AA outputs; no desktop capture.
+    std::vector<ScreenshotReadback> aa_screenshots;
+    static const bool compare_aa = [] {
+        const char* env = std::getenv("DCPC_AA_COMPARE_SHOTS");
+        return env && env[0] == '1';
+    }();
 
     // Capture the guest output before any host-side scaling (FSR/PP) is applied.
     if (capture_game_only_count > 0) {
@@ -738,9 +778,50 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     // Continue with host-side passes that draw the displayed (scaled) frame.
 
     runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
-                    vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead);
+                    vk::PipelineStageFlagBits2::eAllCommands, vk::AccessFlagBits2::eShaderRead);
     runtime.FlushBarriers();
 
+    const bool srgb_encoded =
+        attribute.attrib.pixel_format == Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb;
+    if (compare_aa && capture_game_only_count && !frame->is_hdr) {
+        for (int mode = 1; mode <= 2; ++mode) {
+            aa_pass.Render(cmdbuf, image_view, image_size, mode, srgb_encoded);
+            auto paths = BuildScreenshotPaths(ScreenshotKind::GameOnly, 1);
+            paths[0] = paths[0].parent_path() /
+                       (paths[0].stem().string() + (mode == 1 ? "_FXAA.png" : "_SMAA.png"));
+            auto& readback = aa_screenshots.emplace_back(
+                instance, ScreenshotKind::GameOnly, std::move(paths), image_size.width,
+                image_size.height, vk::Format::eR16G16B16A16Sfloat, false);
+            readback.linear_encoded = !srgb_encoded;
+            const vk::ImageMemoryBarrier2 barrier{
+                .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+                .oldLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+                .image = aa_pass.OutputImage(),
+                .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                     .levelCount = 1,
+                                     .layerCount = 1},
+            };
+            cmdbuf.pipelineBarrier2(
+                {.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+            CopyImageToReadback(cmdbuf, aa_pass.OutputImage(), vk::ImageLayout::eTransferSrcOptimal,
+                                readback);
+        }
+    }
+    int selected_aa = aa_mode;
+    static const bool cycle_aa = [] {
+        const char* env = std::getenv("DCPC_AA_CYCLE");
+        return env && env[0] == '1';
+    }();
+    if (cycle_aa) {
+        static const u64 start = DriveclubPC::Profiler::NowNs();
+        selected_aa = int(((DriveclubPC::Profiler::NowNs() - start) / 10000000000ULL) % 3);
+        DriveclubPC::Profiler::SetPhase(selected_aa);
+    }
+    image_view = aa_pass.Render(cmdbuf, image_view, image_size, selected_aa, srgb_encoded);
     image_view = fsr_pass.Render(cmdbuf, image_view, image_size, {frame->width, frame->height},
                                  fsr_settings, frame->is_hdr);
 
@@ -758,6 +839,14 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             [deferred_screenshot = std::move(pending_screenshot)]() {
                 SavePendingScreenshot(deferred_screenshot.value());
             });
+    }
+    if (!aa_screenshots.empty()) {
+        draw_scheduler.DeferPriorityOperation([screenshots = std::move(aa_screenshots)]() mutable {
+            for (auto& readback : screenshots) {
+                readback.buffer.Invalidate(0, readback.buffer.SizeBytes());
+                SavePendingScreenshot(readback);
+            }
+        });
     }
 
     // Flush frame creation commands.

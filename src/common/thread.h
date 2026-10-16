@@ -26,6 +26,9 @@ void SetCurrentThreadName(const char* name);
 
 void SetThreadName(void* thread, const char* name);
 
+// driveclub-pc: constrain critical threads to available performance CPUs on hybrid Windows hosts.
+void PinPerformanceThread(const char* name);
+
 /// Hard-pins the calling thread to the given logical CPUs (bit N = CPU N, first 64 only).
 /// Linux and Windows; a no-op returning false elsewhere.
 bool SetCurrentThreadAffinityMask(u64 mask);
