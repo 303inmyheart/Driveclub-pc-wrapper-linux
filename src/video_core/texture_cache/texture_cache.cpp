@@ -1922,6 +1922,17 @@ void TextureCache::GarbageCollectImages() {
     if (instance.CanReportMemoryUsage()) {
         total_used_memory = instance.GetDeviceMemoryUsage();
     }
+    // driveclub-pc: DCPC_GC_BUDGET_MB=<n> lowers the collector's thresholds (trigger at n/2,
+    // pressure at n, critical at 1.25 n) to test it under memory pressure.
+    static const u64 gc_budget = [] {
+        const char* env = std::getenv("DCPC_GC_BUDGET_MB");
+        return env ? static_cast<u64>(std::strtoull(env, nullptr, 10)) << 20 : u64{0};
+    }();
+    if (gc_budget != 0) {
+        trigger_gc_memory = gc_budget / 2;
+        pressure_gc_memory = gc_budget;
+        critical_gc_memory = gc_budget + gc_budget / 4;
+    }
     if (total_used_memory < trigger_gc_memory) {
         return;
     }
@@ -1939,6 +1950,9 @@ void TextureCache::GarbageCollectImages() {
     bool aggresive = false;
     u64 ticks_to_destroy = 0;
     size_t num_deletions = 0;
+    u32 gc_visits = 0;
+    u64 gc_freed = 0;
+    u64 gc_skipped = 0;
 
     const auto configure = [&](bool allow_aggressive) {
         pressured = total_used_memory >= pressure_gc_memory;
@@ -1963,16 +1977,33 @@ void TextureCache::GarbageCollectImages() {
         if (num_deletions == 0) {
             return true;
         }
-        --num_deletions;
+        // driveclub-pc (bloodborne_pc 0.3 / iss_pc 520b235): an image that cannot be freed
+        // now (a GPU-written tiled image, or one that needs a download while there is no
+        // memory pressure) used to cost a deletion and stay at the front of the queue. Once
+        // the oldest images were all of that kind, every pass spent its budget on them and
+        // freed nothing, so texture memory only grew. It now moves to the back of the queue
+        // for free, and a pass looks at no more than 256 images. DCPC_GC_SKIP_FIX=0 reverts.
         const bool download = image.SafeToDownload();
         const bool tiled = image.info.IsTiled();
-        if (tiled && download) {
-            // This is a workaround for now. We can't handle non-linear image downloads.
-            return false;
+        const bool cannot_free = (tiled && download) || (download && !pressured);
+        if (gc_skip_fix_) {
+            if (++gc_visits > 256) {
+                return true;
+            }
+            if (cannot_free) {
+                image_lru_cache.Touch(image, gc_tick);
+                ++gc_skipped;
+                return false;
+            }
+            --num_deletions;
+        } else {
+            --num_deletions;
+            if (cannot_free) {
+                // This is a workaround for now. We can't handle non-linear image downloads.
+                return false;
+            }
         }
-        if (download && !pressured) {
-            return false;
-        }
+        ++gc_freed;
         const auto image_id = slot_images.GetSlotId(image);
         if (download) {
             DownloadImageMemory(image_id);
@@ -1995,12 +2026,29 @@ void TextureCache::GarbageCollectImages() {
 
     // Try to remove anything old enough and not high priority.
     configure(false);
+    const bool was_pressured = pressured;
     image_lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
 
     if (total_used_memory >= critical_gc_memory) {
         // If we are still over the critical limit, run an aggressive GC
         configure(true);
+        gc_visits = 0;
         image_lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
+    }
+    // driveclub-pc: under memory pressure, report what the collector achieved (every 10 s).
+    gc_pressure_freed_ += was_pressured ? gc_freed : 0;
+    gc_pressure_skipped_ += was_pressured ? gc_skipped : 0;
+    gc_pressure_passes_ += was_pressured ? 1 : 0;
+    if (was_pressured) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - gc_last_report_ >= std::chrono::seconds(10)) {
+            LOG_INFO(Render, "Texture GC under pressure: {} MiB used (pressure {} MiB), {} passes, "
+                             "{} images freed, {} moved back",
+                     total_used_memory >> 20, pressure_gc_memory >> 20, gc_pressure_passes_,
+                     gc_pressure_freed_, gc_pressure_skipped_);
+            gc_last_report_ = now;
+            gc_pressure_freed_ = gc_pressure_skipped_ = gc_pressure_passes_ = 0;
+        }
     }
     // Per-pass worst case: a per300f total cannot tell an amortised pass from a
     // one-off sweep of the whole live set after a long stretch below the trigger.

@@ -4,7 +4,9 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstddef>
 #include <memory>
 #include <mutex>
@@ -780,6 +782,16 @@ private:
     // Lazy-touch GC-walk accounting; only written with lru_lazy_touch latched on.
     u64 lru_lazy_gc_runs_{};
     u64 lru_lazy_hard_{};     // passes configured pressured or aggressive
+    // driveclub-pc: images the collector cannot free move to the back of the queue
+    // (GarbageCollectImages); DCPC_GC_SKIP_FIX=0 restores the old behaviour.
+    bool gc_skip_fix_ = [] {
+        const char* env = std::getenv("DCPC_GC_SKIP_FIX");
+        return env == nullptr || std::atoi(env) != 0;
+    }();
+    u64 gc_pressure_freed_{};
+    u64 gc_pressure_skipped_{};
+    u64 gc_pressure_passes_{};
+    std::chrono::steady_clock::time_point gc_last_report_{};
     u64 lru_lazy_visits_{};   // clean_up calls
     u64 lru_lazy_maxvisit_{}; // most clean_up calls in one GarbageCollectImages pass
     u64 lru_lazy_relinks_{};
