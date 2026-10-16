@@ -382,12 +382,13 @@ void Liverpool::Process(std::stop_token stoken) {
     Common::PinPerformanceThread("shadPS4:GpuCommandProcessor");
     // driveclub-pc: the reserved CPU alone made the thread wait a scheduler quantum (~15/30 ms
     // stutters on the 550 ms grid, docs/benchmarks.md) whenever another thread or a driver held
-    // it. DCPC_CP_SCHED=1 widens it to all performance CPUs at a higher priority;
+    // it. Default: all performance CPUs at a higher priority (manual race in-run A/B: 6.0 vs 20.8
+    // stutters/min, same cost per draw); DCPC_CP_SCHED=0 restores the reserved CPU alone.
     // DCPC_CP_SCHED_AB=1 alternates both every 10 s (profiler phase 1 = wide).
     const char* sched_env = std::getenv("DCPC_CP_SCHED");
     const char* sched_ab_env = std::getenv("DCPC_CP_SCHED_AB");
     const bool sched_ab = sched_ab_env && sched_ab_env[0] == '1';
-    const bool sched_wide = sched_env && sched_env[0] == '1';
+    const bool sched_wide = !(sched_env && sched_env[0] == '0');
     if (sched_wide && !sched_ab) {
         Common::SetCommandProcessorScheduling(true);
         LOG_INFO(Render, "driveclub-pc: command processor on all performance CPUs, high priority");
