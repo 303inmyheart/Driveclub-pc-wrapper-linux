@@ -13,6 +13,44 @@ to run **Driveclub (CUSA00093, v1.28)** on Windows. It is built on
 Unofficial, and not affiliated with Sony Interactive Entertainment, Evolution Studios, the
 shadPS4 team or the GR2fork author. Names and trademarks belong to their owners.
 
+## Tested version
+
+Only **Driveclub CUSA00093 with update 1.28** has been tested. Other regions or versions may not work.
+
+## How to use
+
+1. Download the release zip and extract it into its own folder.
+2. Get your dumps ready:
+   - the base game folder (`CUSA00093`), and next to it the 1.28 update folder named
+     `<base folder>-patch` or `<base folder>-UPDATE`;
+   - the PS4 firmware modules (`sys_modules`) from your own console.
+3. Run `Driveclub-PC.exe`. A settings window opens:
+
+| Setting | What to choose |
+|---|---|
+| Game folder | the base game folder (`CUSA00093`) |
+| Firmware | your `sys_modules` folder. **Import...** copies it into `user\sys_modules`, so the original can move later |
+| Frame rate | 30 / **60 (recommended)** / 120 (experimental, depends on scene and CPU temperature) |
+| Display / Resolution | borderless fullscreen or window; output size (the game renders at 1920x1080) |
+| Upscaling / Sharpening | AMD FSR 1 or bilinear; RCAS sharpening off / normal / strong |
+| Anisotropic filter | 16x by default; Off keeps the game's own setting |
+| Anti-aliasing | Off / **FXAA (default)** / SMAA 1x High |
+| Prefer performance cores | on by default; keeps the busiest threads on P-cores of hybrid Intel CPUs |
+| GPU readbacks | **Precise (default)**. Relaxed is faster but causes shadow and vegetation glitches; Off makes the 3D world nearly black |
+| Classic PS4 frame pacing | fallback: only turn it on if game speed feels wrong |
+| Show this window at start | if turned off, the game starts directly; hold **Shift** while launching to open the window again |
+
+4. Press **Play**. Before the game boots, the launcher checks the folder, the title ID, the update
+   version and the firmware, and explains any problem it finds.
+
+The game's own clock runs in real time: race times are correct at 120 FPS as well, and physics don't speed up.
+
+**Data:** settings, saves, shader cache and logs are all kept in the `user` folder next to the
+executable. Keep that folder when you update to a new release. The log of the last run is
+`user\log\shad_log.txt`.
+
+**Controls:** gamepad through SDL, the same as shadPS4/GR2fork.
+
 ## What it changes
 
 Compared with GR2fork, this fork adds a Driveclub launcher with settings, 30/60/120 FPS targets,
