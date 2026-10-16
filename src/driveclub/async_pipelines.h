@@ -14,6 +14,11 @@
 //
 // DCPC_ASYNC_PIPELINES=1 enables it (default off), DCPC_ASYNC_PIPELINES_THREADS (default 2) sets
 // the worker count.
+//
+// DCPC_ASYNC_SHADERS=1 moves the vertex/fragment shader translation (GCN -> IR -> SPIR-V and the
+// shader module) to the same pool (PipelineCache::AsyncCreateProgram); draws needing a program
+// or permutation still being translated are skipped and counted in pipeline_skips too. Compute,
+// geometry and tessellation stages stay synchronous.
 
 #pragma once
 

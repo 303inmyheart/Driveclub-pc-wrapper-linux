@@ -12,6 +12,7 @@
 #include "common/path_util.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
+#include "driveclub/async_pipelines.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/info.h"
 #include "shader_recompiler/recompiler.h"
@@ -946,6 +947,16 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                              AmdGpu::Liverpool* liverpool_, u32 sparse_page_shift)
     : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_},
       desc_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes}, layouts{instance} {
+    if (const char* env = std::getenv("DCPC_ASYNC_SHADERS");
+        env && (env[0] == '1' || env[0] == 'f' || env[0] == 'v')) {
+        // 1: vertex and fragment, f / v: only that stage (diagnostic).
+        async_shader_vs = env[0] != 'f';
+        async_shader_fs = env[0] != 'v';
+        async_shaders = !EmulatorSettings.IsPatchShaders() && !EmulatorSettings.IsDumpShaders() &&
+                        !EmulatorSettings.IsShaderCollect();
+        LOG_INFO(Render_Vulkan, "driveclub-pc: async shader translation {}",
+                 async_shaders ? "on" : "off (shader patching, dumping or collection is on)");
+    }
     const auto& vk12_props = instance.GetVk12Properties();
     profile = Shader::Profile{
         .max_viewport_width = instance.GetMaxViewportWidth(),
@@ -1500,6 +1511,9 @@ bool PipelineCache::RefreshGraphicsKey() {
 
     // Compile and bind shader stages
     if (!RefreshGraphicsStages(false)) {
+        if (stage_pending) {
+            DriveclubPC::AsyncPipelines::CountSkip();
+        }
         return false;
     }
 
@@ -1600,6 +1614,7 @@ bool PipelineCache::RefreshGraphicsStages(bool track_hash_diff) {
     auto& key = graphics_key;
     fetch_shader_ref = {};
     stage_hash_diff = 0;
+    stage_pending = false;
 
     // An armed resolve accumulates old ^ new per stage hash it writes, so the
     // reuse decision never reloads the array right after these stores.
@@ -1724,6 +1739,11 @@ bool PipelineCache::RefreshGraphicsStages(bool track_hash_diff) {
         return false;
     }
 
+    if (stage_pending) {
+        // driveclub-pc: a stage is still being translated off-thread; the draw is skipped.
+        return false;
+    }
+
     const auto* vs_info = infos[static_cast<u32>(Shader::SwStage::Vertex)];
     if (!instance.IsVertexInputDynamicState() && vs_info && fetch_shader_ref) {
         // Without vertex input dynamic state, the pipeline needs to specialize on format.
@@ -1830,6 +1850,11 @@ u64 PipelineCache::CreateProgramSlow(HwStage stage, SwStage l_stage,
 
 u64 PipelineCache::GetProgram(HwStage stage, SwStage l_stage, const Shader::ShaderParams& params,
                               Shader::Backend::Bindings& binding, u32 out_slot) {
+    if (stage_pending && AsyncShaderEligible(stage, l_stage)) {
+        // driveclub-pc: an earlier stage of this draw is still translating, so the binding start
+        // of this one is unknown; a lookup now would compile a permutation for a wrong start.
+        return Publish(out_slot, l_stage, nullptr, {}, nullptr, 0u, 0);
+    }
     const bool non_tess =
         l_stage != SwStage::TessellationControl && l_stage != SwStage::TessellationEval;
     auto& ri_slot = ri_stamp[static_cast<u32>(l_stage)];
@@ -1868,6 +1893,12 @@ u64 PipelineCache::GetProgram(HwStage stage, SwStage l_stage, const Shader::Shad
         ++pgmid_map_hits;
     } else {
         ++pgmid_map_probes;
+        if (async_shaders && AsyncShaderEligible(stage, l_stage) &&
+            !program_cache.contains(params.hash) &&
+            !AsyncCreateProgram(stage, l_stage, params, binding)) {
+            stage_pending = true;
+            return Publish(out_slot, l_stage, nullptr, {}, nullptr, 0u, 0);
+        }
         auto [it_pgm, new_program] = program_cache.try_emplace(params.hash);
         if (new_program) {
             return CreateProgramSlow(stage, l_stage, params, binding, out_slot, it_pgm.value(), id);
@@ -2215,6 +2246,55 @@ u64 PipelineCache::ResolvePermutationSlow(HwStage stage, SwStage l_stage,
             }
         }
     }
+    if (hit_idx == std::numeric_limits<size_t>::max() && async_shaders &&
+        !program->async_sync_only && AsyncShaderEligible(stage, l_stage)) {
+        // driveclub-pc: translate the new permutation off-thread; the draw waits for it.
+        auto& jobs = pending_perms[program];
+        const auto it =
+            std::ranges::find_if(jobs, [&](const auto& j) { return j->key_spec == spec; });
+        if (it == jobs.end()) {
+            auto job = std::make_shared<AsyncShaderJob>();
+            job->perm_info.emplace(stage, l_stage, params);
+            std::ranges::copy(params.user_data, job->ud.begin());
+            job->perm_info->user_data = job->ud;
+            job->key_spec = spec;
+            job->runtime_info.emplace(runtime_info);
+            job->start = binding;
+            job->code = params.code;
+            jobs.push_back(job);
+            ++async_shader_jobs;
+            DriveclubPC::AsyncPipelines::Submit([this, job] { RunAsyncShaderJob(*job); });
+            stage_pending = true;
+            return Publish(out_slot, l_stage, nullptr, {}, nullptr, 0u, 0);
+        }
+        if (!(*it)->done.load(std::memory_order_acquire)) {
+            stage_pending = true;
+            return Publish(out_slot, l_stage, nullptr, {}, nullptr, 0u, 0);
+        }
+        const auto job = *it;
+        jobs.erase(it);
+        FinishAsyncShaderJob(*job, params.hash, perm_idx);
+        // The job specialised from the descriptors it read itself; keep the module under that.
+        job->spec.info = &info;
+        RegisterShaderMeta(info, job->spec.fetch_shader_data, job->spec, perm_hash, perm_idx);
+        program->AddPermut(job->module, std::move(job->spec));
+        if (!(program->modules.back().spec == spec)) {
+            // The game rewrote the descriptors before the job read them: this permutation is
+            // not the draw's. Compile this program's permutations synchronously from now on.
+            program->async_sync_only = true;
+            const auto& m = program->modules.back().spec;
+            LOG_INFO(Render_Vulkan,
+                     "driveclub-pc: shader {:#x} permutation mismatch, now sync (ri {} bits {} "
+                     "fetch {} vsattr {} buf {} img {} fmask {} smp {} start {})",
+                     params.hash, m.runtime_info == spec.runtime_info, m.bitset == spec.bitset,
+                     m.fetch_shader_data == spec.fetch_shader_data, m.vs_attribs == spec.vs_attribs,
+                     m.buffers == spec.buffers, m.images == spec.images, m.fmasks == spec.fmasks,
+                     m.samplers == spec.samplers, m.start == spec.start);
+            stage_pending = true;
+            return Publish(out_slot, l_stage, nullptr, {}, nullptr, 0u, 0);
+        }
+        hit_idx = program->modules.size() - 1;
+    }
     if (hit_idx == std::numeric_limits<size_t>::max()) {
         auto new_info = Shader::Info(stage, l_stage, params);
         auto ri_compile = runtime_info;
@@ -2268,6 +2348,78 @@ u64 PipelineCache::ResolvePermutationSlow(HwStage stage, SwStage l_stage,
     program->last_hit_perm = static_cast<u32>(perm_idx);
     return Publish(out_slot, l_stage, &program->info, module, program, static_cast<u32>(perm_idx),
                    perm_hash);
+}
+
+bool PipelineCache::AsyncShaderEligible(HwStage stage, SwStage l_stage) const {
+    return (stage == HwStage::Vertex && l_stage == SwStage::Vertex && async_shader_vs) ||
+           (stage == HwStage::Fragment && l_stage == SwStage::Fragment && async_shader_fs);
+}
+
+// Runs on a worker: the translation part of CompileModule plus, for a new program, the
+// specialization of its first permutation, which reads the same user data the translation saw.
+void PipelineCache::RunAsyncShaderJob(AsyncShaderJob& job) const {
+    thread_local Shader::Pools job_pools;
+    Shader::Info& info = job.program ? job.program->info : *job.perm_info;
+    // A permutation is specialised from the runtime info before translation rewrites it (as on
+    // the synchronous path); a new program's first permutation from the rewritten one.
+    const Shader::RuntimeInfo ri_spec = *job.runtime_info;
+    auto binding = job.start;
+    const auto ir_program =
+        Shader::TranslateProgram(job.code, job_pools, info, *job.runtime_info, profile);
+    info.ResolveDirectReads();
+    job.spv = Shader::Backend::SPIRV::EmitSPIRV(profile, *job.runtime_info, ir_program, binding);
+    job.module = CompileSPV(job.spv, instance.GetDevice());
+    // Specialise from the same guest memory the translation just read, so the module and its
+    // specialization agree even if the game rewrote the descriptors after the draw.
+    info.RefreshFlatBuf();
+    job.spec = Shader::StageSpecialization(info, job.program ? *job.runtime_info : ri_spec, profile,
+                                           job.start);
+    if (spec_fp_cache) {
+        job.spec.ComputeSig();
+    }
+    job.done.store(true, std::memory_order_release);
+}
+
+// The command-processor half of CompileModule for a finished job.
+void PipelineCache::FinishAsyncShaderJob(AsyncShaderJob& job, u64 hash, size_t perm_idx) {
+    const Shader::Info& info = job.program ? job.program->info : *job.perm_info;
+    LOG_INFO(Render_Vulkan, "Compiled {} shader {:#x} {}off-thread", info.hw_stage, hash,
+             perm_idx != 0 ? "(permutation) " : "");
+    RegisterShaderBinary(std::move(job.spv), hash, perm_idx);
+    Vulkan::SetObjectName(instance.GetDevice(), job.module,
+                          GetShaderName(info.hw_stage, hash, perm_idx));
+}
+
+Program* PipelineCache::AsyncCreateProgram(HwStage stage, SwStage l_stage,
+                                           const Shader::ShaderParams& params,
+                                           const Shader::Backend::Bindings& binding) {
+    auto it = pending_programs.find(params.hash);
+    if (it == pending_programs.end()) {
+        auto job = std::make_shared<AsyncShaderJob>();
+        job->program = std::make_unique<Program>(stage, l_stage, params);
+        std::ranges::copy(params.user_data, job->program->async_ud.begin());
+        job->program->info.user_data = job->program->async_ud;
+        job->runtime_info.emplace(runtime_infos[static_cast<u32>(l_stage)]);
+        job->start = binding;
+        job->code = params.code;
+        pending_programs.emplace(params.hash, job);
+        ++async_shader_jobs;
+        DriveclubPC::AsyncPipelines::Submit([this, job] { RunAsyncShaderJob(*job); });
+        return nullptr;
+    }
+    if (!it->second->done.load(std::memory_order_acquire)) {
+        return nullptr;
+    }
+    const auto job = it->second;
+    pending_programs.erase(it);
+    FinishAsyncShaderJob(*job, params.hash, 0);
+    Program* program = job->program.get();
+    NoteSharpVerdicts(program->info);
+    RegisterShaderMeta(program->info, job->spec.fetch_shader_data, job->spec,
+                       HashCombine(params.hash, 0), 0);
+    program->AddPermut(job->module, std::move(job->spec));
+    program_cache.emplace(params.hash, std::move(job->program));
+    return program;
 }
 
 std::optional<vk::ShaderModule> PipelineCache::ReplaceShader(vk::ShaderModule module,
