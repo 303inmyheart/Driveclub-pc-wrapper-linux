@@ -43,6 +43,7 @@ struct Settings {
     int height = 0;
     bool fsr = true;
     int sharpening = 1; ///< 0 off, 1 normal, 2 strong
+    int readbacks = 2;  ///< GPU readbacks: 0 off, 1 relaxed, 2 precise
     bool show_fps = false;
     bool deferred_recording = false;
     bool classic_vblank = false;
@@ -82,6 +83,7 @@ Settings Load() {
     s.height = num("height", s.height);
     s.fsr = num("fsr", s.fsr) != 0;
     s.sharpening = std::clamp(num("sharpening", s.sharpening), 0, 2);
+    s.readbacks = std::clamp(num("readbacks", s.readbacks), 0, 2);
     s.show_fps = num("show_fps", s.show_fps) != 0;
     s.deferred_recording = num("deferred_recording", s.deferred_recording) != 0;
     s.classic_vblank = num("classic_vblank", s.classic_vblank) != 0;
@@ -102,6 +104,7 @@ void Save(const Settings& s) {
         << "height=" << s.height << "\n"
         << "fsr=" << int(s.fsr) << "\n"
         << "sharpening=" << s.sharpening << "\n"
+        << "readbacks=" << s.readbacks << "\n"
         << "show_fps=" << int(s.show_fps) << "\n"
         << "deferred_recording=" << int(s.deferred_recording) << "\n"
         << "classic_vblank=" << int(s.classic_vblank) << "\n"
@@ -145,6 +148,7 @@ void WriteGameConfig(const Settings& s) {
     gpu["fsr_enabled"] = s.fsr;
     gpu["rcas_enabled"] = s.sharpening != 0;
     gpu["rcas_attenuation"] = s.sharpening == 2 ? 100 : 250;
+    gpu["readbacks_mode"] = s.readbacks;
     std::ofstream out(path);
     out << json.dump(2) << "\n";
 }
@@ -208,6 +212,7 @@ enum Id : int {
     IdResolution,
     IdUpscaling,
     IdSharpening,
+    IdReadbacks,
     IdShowFps,
     IdDeferred,
     IdClassic,
@@ -338,6 +343,7 @@ void CollectSettings() {
     s.height = g_ui->resolutions[res].second;
     s.fsr = ComboIndex(IdUpscaling) == 0;
     s.sharpening = std::clamp(ComboIndex(IdSharpening), 0, 2);
+    s.readbacks = 2 - std::clamp(ComboIndex(IdReadbacks), 0, 2);
     s.show_fps = Checked(IdShowFps);
     s.deferred_recording = Checked(IdDeferred);
     s.classic_vblank = Checked(IdClassic);
@@ -423,6 +429,12 @@ void BuildControls() {
 
     Label(L"Sharpening", L, y, 140);
     Combo(IdSharpening, C, y, W, {L"Off", L"Normal (RCAS)", L"Strong (RCAS)"}, s.sharpening);
+    y += Row;
+
+    Label(L"GPU readbacks", L, y, 140);
+    Combo(IdReadbacks, C, y, W,
+          {L"Precise (recommended)", L"Relaxed (faster)", L"Off (fastest, effects may break)"},
+          2 - s.readbacks);
     y += Row + 6;
 
     Make(L"BUTTON", L"Show FPS counter", BS_AUTOCHECKBOX | WS_TABSTOP, C, y, W, 22, IdShowFps);
@@ -554,7 +566,7 @@ bool ShowWindow(Settings& s) {
     wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
     RegisterClassExW(&wc);
 
-    RECT rect{0, 0, Px(600), Px(560)};
+    RECT rect{0, 0, Px(600), Px(596)};
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     AdjustWindowRectExForDpi(&rect, style, FALSE, 0, GetDpiForSystem());
     const int w = rect.right - rect.left, h = rect.bottom - rect.top;

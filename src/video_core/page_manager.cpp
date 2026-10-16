@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <mutex>
 #include <utility>
 #include "common/adaptive_mutex.h"
@@ -9,6 +11,7 @@
 #include "common/debug.h"
 #include "common/div_ceil.h"
 #include "common/error.h"
+#include "common/logging/log.h"
 #include "common/multi_level_page_table.h"
 #include "common/signal_context.h"
 #include "common/thread.h"
@@ -441,11 +444,36 @@ struct SignalImpl : public PageManager::Impl {
         impl.Protect(address, size, perms);
     }
 
+    // driveclub-pc: fault statistics, logged every 10 s (write/read faults, on guest threads
+    // vs the GPU command thread), to judge whether a larger unprotect window would pay.
+    static void CountFault(bool write, bool gpu_thread) {
+        static std::atomic<u64> counts[4]{};
+        static std::atomic<s64> last_report_ns{0};
+        counts[(write ? 0 : 2) + (gpu_thread ? 1 : 0)].fetch_add(1, std::memory_order_relaxed);
+        const s64 now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+        s64 last = last_report_ns.load(std::memory_order_relaxed);
+        if (last == 0) {
+            last_report_ns.compare_exchange_strong(last, now);
+            return;
+        }
+        if (now - last >= 10'000'000'000 &&
+            last_report_ns.compare_exchange_strong(last, now)) {
+            const double secs = static_cast<double>(now - last) / 1e9;
+            LOG_INFO(Render, "Guest faults per second: write {:.0f} (GPU thread {:.0f}), read {:.0f} "
+                             "(GPU thread {:.0f})",
+                     counts[0].exchange(0) / secs, counts[1].exchange(0) / secs,
+                     counts[2].exchange(0) / secs, counts[3].exchange(0) / secs);
+        }
+    }
+
     static bool GuestFaultSignalHandler(void* context, void* fault_address) {
         const auto addr = reinterpret_cast<VAddr>(fault_address);
         const auto size = std::min<u64>(8, PageManager::GetNextPageAddr(addr) - addr);
         const auto is_gpu_thread =
             std::this_thread::get_id() == rasterizer->GetGpuCommandProcessorThread();
+        CountFault(Common::IsWriteError(context), is_gpu_thread);
         if (Common::IsWriteError(context)) {
             return rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
         } else {
