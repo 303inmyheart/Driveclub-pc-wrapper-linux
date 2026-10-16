@@ -10,6 +10,7 @@
 #include "common/rdtsc.h"
 
 #include "common/debug.h"
+#include "driveclub/async_pipelines.h"
 #include "driveclub/diag_tables.h"
 #include "driveclub/performance.h"
 #include "core/debug_state.h"
@@ -592,6 +593,11 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
     if (!pipeline) {
         return;
     }
+    if (!pipeline->IsReady()) {
+        // driveclub-pc: still compiling on a worker (DCPC_ASYNC_PIPELINES); skip the draw.
+        DriveclubPC::AsyncPipelines::CountSkip();
+        return;
+    }
 
     // One shared-lock hold covers every guest copy of the whole draw setup;
     // the per-function scopes inside become TLS-flag no-ops. Placed after the
@@ -816,6 +822,11 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
     };
     const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline(params);
     if (!pipeline) {
+        return;
+    }
+    if (!pipeline->IsReady()) {
+        // driveclub-pc: still compiling on a worker (DCPC_ASYNC_PIPELINES); skip the draw.
+        DriveclubPC::AsyncPipelines::CountSkip();
         return;
     }
 

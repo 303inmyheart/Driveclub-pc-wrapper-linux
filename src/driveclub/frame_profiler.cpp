@@ -19,6 +19,7 @@
 #include "common/logging/log.h"
 #include "common/path_util.h"
 #include "common/rdtsc.h"
+#include "driveclub/async_pipelines.h"
 #include "driveclub/diag_tables.h"
 #include "driveclub/frame_profiler.h"
 #include "driveclub/guest_stats.h"
@@ -161,7 +162,7 @@ bool Decide() {
                          "resident_binds,resident_kb,sparse_submits,image_creates,image_deletes,"
                          "image_uploads,image_upload_kb,file_reads,file_read_kb,time_spin_sleeps,gpu_ms,"
                          "gpu_max_ms,"
-                         "gpu_batches,submit_delay_max_ms,present_hold_max_ms\n");
+                         "gpu_batches,submit_delay_max_ms,present_hold_max_ms,pipeline_skips\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
             if (const char* at = std::getenv("DCPC_TRACE_AT")) {
                 g_trace_at_s = std::atof(at);
@@ -600,7 +601,7 @@ void OnGuestFrame() {
     for (auto& m : g_max) {
         std::fprintf(w.file, ",%.3f", Ms(Take(m)));
     }
-    std::fprintf(w.file, "\n");
+    std::fprintf(w.file, ",%llu\n", static_cast<unsigned long long>(AsyncPipelines::TakeSkips()));
     ++w.frame;
     g_frames.store(w.frame, std::memory_order_relaxed);
     if ((w.frame & 63) == 0) {

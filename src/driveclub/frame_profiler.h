@@ -44,6 +44,7 @@
 //                         completed in the frame (completion time minus the later of its submit
 //                         and the previous batch's completion), the longest batch, batch count
 //   submit_delay_max_ms, present_hold_max_ms  see MaxStat
+//   pipeline_skips        draws skipped while their pipeline compiled (DCPC_ASYNC_PIPELINES)
 // Every 600 frames the command processor also logs the wait addresses with the most time and which
 // game threads submitted to which queue.
 

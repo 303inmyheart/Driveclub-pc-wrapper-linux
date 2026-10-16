@@ -1347,6 +1347,8 @@ add_executable(shadps4
     src/driveclub/frame_profiler.h
     src/driveclub/performance.cpp
     src/driveclub/performance.h
+    src/driveclub/async_pipelines.cpp
+    src/driveclub/async_pipelines.h
     src/driveclub/autopilot.cpp
     src/driveclub/autopilot.h
     src/driveclub/launcher.cpp

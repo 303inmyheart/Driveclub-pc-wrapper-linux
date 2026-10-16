@@ -8,6 +8,7 @@
 #include "video_core/renderer_vulkan/vk_common.h"
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -41,6 +42,11 @@ public:
 
     vk::Pipeline Handle() const noexcept {
         return *pipeline;
+    }
+
+    /// driveclub-pc: false while an async create (DCPC_ASYNC_PIPELINES) is still running.
+    bool IsReady() const noexcept {
+        return handle_ready.load(std::memory_order_acquire);
     }
 
     vk::PipelineLayout GetLayout() const noexcept {
@@ -165,6 +171,7 @@ protected:
     DescriptorHeap& desc_heap;
     const Shader::Profile& profile;
     vk::UniquePipeline pipeline;
+    std::atomic<bool> handle_ready{true};
     PipelineLayoutCache* layouts;
     vk::PipelineLayout pipeline_layout{};
     vk::DescriptorSetLayout desc_layout{};
