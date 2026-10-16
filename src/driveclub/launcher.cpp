@@ -44,7 +44,7 @@ struct Settings {
     int height = 0;
     bool fsr = true;
     int sharpening = 1; ///< 0 off, 1 normal, 2 strong
-    int readbacks = 2;  ///< GPU readbacks: 0 off, 1 relaxed, 2 precise
+    int readbacks = 1;  ///< driveclub-pc: default Relaxed for owner testing; 0 off, 1 relaxed, 2 precise
     // driveclub-pc: image quality and hybrid CPU settings.
     int af = 16;
     int aa = 1;
@@ -468,7 +468,7 @@ void BuildControls() {
 
     Label(L"GPU readbacks", L, y, 140);
     Combo(IdReadbacks, C, y, W,
-          {L"Precise (recommended)", L"Relaxed (faster)", L"Off (fastest, effects may break)"},
+          {L"Precise (compatibility)", L"Relaxed (default)", L"Off (fastest, effects may break)"},
           2 - s.readbacks);
     y += Row + 6;
 

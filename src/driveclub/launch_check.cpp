@@ -125,7 +125,7 @@ void EnsureDefaultGameConfig() {
 #endif
     std::ofstream out(path);
     out << fmt::format("{{\n  \"GPU\": {{\n"
-                       "    \"readbacks_mode\": 2,\n"
+                       "    \"readbacks_mode\": 1,\n"
                        "    \"readback_offload\": true,\n"
                        "    \"fsr_enabled\": true,\n"
                        "    \"rcas_enabled\": true,\n"
