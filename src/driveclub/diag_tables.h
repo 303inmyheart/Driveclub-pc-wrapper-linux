@@ -21,11 +21,22 @@ namespace DriveclubPC::DiagTables {
 
 bool Active();
 
-void NoteFault(bool write, u64 rip, u64 address, u64 ns);
+/// PM4 packet the command processor is executing: (engine << 8) | opcode, engine 1 constant,
+/// 2 graphics, 3 compute. Written per packet on that thread; read by the download table.
+inline thread_local u32 t_cp_packet = 0;
+
+/// cpu_data: a read of bytes that are current in guest memory, faulting only because other
+/// bytes of its page are GPU modified (false sharing).
+void NoteFault(bool write, bool cpu_data, u64 rip, u64 address, u64 ns);
 void NoteDownload(u64 window, u64 bytes, u64 ns);
 // site: 0 overlap recreate, 1 expand, 2 new, 3 stencil, 255 delete
 void NoteImage(u32 site, u64 guest_address, u32 width, u32 height, u32 format, u32 tile_mode,
                u64 guest_size);
+
+/// Memory-to-memory copy (DMA_DATA, CP_DMA) the command processor sent to the GPU instead of
+/// copying it on the CPU. reason bits: 1 destination GPU modified, 2 source GPU modified,
+/// 4 source inside a texture-cache image. Written to dma_copies.csv.
+void NoteGpuCopy(u64 dst, u64 src, u32 bytes, u32 reason);
 
 /// Frame writer thread (frame profiler), once per guest frame.
 void OnFrame();

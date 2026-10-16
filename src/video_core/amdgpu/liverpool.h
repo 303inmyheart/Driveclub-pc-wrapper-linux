@@ -241,6 +241,8 @@ private:
     using CmdBuffer = std::pair<std::span<const u32>, std::span<const u32>>;
     CmdBuffer CopyCmdBuffers(std::span<const u32> dcb, std::span<const u32> ccb);
     Task ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb);
+    /// driveclub-pc: the command buffer through the backing view when that is safe.
+    std::span<const u32> CommandBufferView(std::span<const u32> cb);
     /// Consumes every graphics packet whose handling cannot suspend the parser.
     /// Returns empty when dcb is exhausted, else the cursor on the unconsumed
     /// packet the coroutine must handle. Out of line by contract: inlined back

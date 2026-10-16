@@ -10,6 +10,7 @@
 #include "common/rdtsc.h"
 
 #include "common/debug.h"
+#include "driveclub/diag_tables.h"
 #include "driveclub/performance.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
@@ -2989,6 +2990,12 @@ void Rasterizer::CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, b
             std::memcpy(std::bit_cast<void*>(dst), std::bit_cast<void*>(src), num_bytes);
             return;
         }
+    }
+    if (DriveclubPC::DiagTables::Active() && !dst_gds && !src_gds) {
+        const u32 reason = (buffer_cache.IsRegionGpuModified(dst, num_bytes) ? 1u : 0u) |
+                           (buffer_cache.IsRegionGpuModified(src, num_bytes) ? 2u : 0u) |
+                           (texture_cache.FindImageFromRange(src, num_bytes) ? 4u : 0u);
+        DriveclubPC::DiagTables::NoteGpuCopy(dst, src, num_bytes, reason);
     }
     texture_cache.InvalidateMemoryFromGPU(dst, num_bytes);
     const auto* gds_buffer = buffer_cache.GetGdsBuffer();

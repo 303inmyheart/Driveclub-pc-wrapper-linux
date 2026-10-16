@@ -18,6 +18,7 @@
 #include "core/memory.h"
 #include "core/platform.h"
 #include "driveclub/deferred_recording.h"
+#include "driveclub/diag_tables.h"
 #include "driveclub/frame_profiler.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/amdgpu/pm4_cmds.h"
@@ -534,6 +535,7 @@ Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
         }
 
         const PM4ItOpcode opcode = header->type3.opcode;
+        DriveclubPC::DiagTables::t_cp_packet = (1u << 8) | static_cast<u32>(opcode);
         const auto* it_body = reinterpret_cast<const u32*>(header) + 1;
         switch (opcode) {
         case PM4ItOpcode::Nop: {
@@ -807,6 +809,7 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
 
         const u32 count = header->type3.NumWords();
         const PM4ItOpcode opcode = header->type3.opcode;
+        DriveclubPC::DiagTables::t_cp_packet = (2u << 8) | static_cast<u32>(opcode);
         // The header load-use stall dominates this loop, so two lines in
         // flight cover the next headers and payload.
         __builtin_prefetch(dcb.data() + 64, 0, 3);
@@ -1301,8 +1304,61 @@ std::span<const u32> Liverpool::RunGraphicsPackets(std::span<const u32> dcb, Tas
     return dcb;
 }
 
+namespace {
+// driveclub-pc: the game keeps a few GPU-written bytes on the pages of its command buffers.
+// Every packet the command processor read from such a page faulted and downloaded those bytes
+// with a full GPU sync (~1.3 ms per frame, docs/benchmarks.md), although the packets themselves
+// are CPU data. A command buffer without GPU data is read through the never-protected backing
+// view of the same memory instead: no fault, same bytes, CPU patches (Rewind) still visible.
+// DCPC_CP_BACKING_READ=1 enables it, DCPC_CP_BACKING_READ_AB=1 alternates every 10 s
+// (profiler phase bit 0).
+bool CpBackingReadActive() {
+    static const int mode = [] {
+        const char* ab = std::getenv("DCPC_CP_BACKING_READ_AB");
+        if (ab && ab[0] == '1') {
+            LOG_INFO(Render, "driveclub-pc: command buffer backing reads alternate every 10 s "
+                             "(profiler phase bit 0 = on)");
+            return 2;
+        }
+        const char* on = std::getenv("DCPC_CP_BACKING_READ");
+        return on && on[0] == '1' ? 1 : 0;
+    }();
+    if (mode != 2) {
+        return mode == 1;
+    }
+    static int state = -1;
+    const bool on = ((std::chrono::steady_clock::now().time_since_epoch() /
+                      std::chrono::seconds(10)) &
+                     1) == 0;
+    if (static_cast<int>(on) != state) {
+        state = on;
+        DriveclubPC::Profiler::SetPhaseBit(0, on);
+    }
+    return on;
+}
+} // namespace
+
+std::span<const u32> Liverpool::CommandBufferView(std::span<const u32> cb) {
+    if (!rasterizer || cb.empty() || !CpBackingReadActive()) {
+        return cb;
+    }
+    const auto addr = reinterpret_cast<VAddr>(cb.data());
+    if (rasterizer->HasGpuData(addr, cb.size_bytes())) {
+        return cb;
+    }
+    Core::MemoryManager::BackingSpan span{};
+    if (Core::Memory::Instance()->ResolveBackingSpans(addr, cb.size_bytes(), &span, 1, false) !=
+            1 ||
+        span.size < cb.size_bytes()) {
+        return cb;
+    }
+    return {reinterpret_cast<const u32*>(span.ptr), cb.size()};
+}
+
 Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb) {
     FIBER_ENTER(dcb_task_name);
+    dcb = CommandBufferView(dcb);
+    ccb = CommandBufferView(ccb);
 
     cblock.Reset();
 
@@ -1445,6 +1501,7 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
         }
 
         const PM4ItOpcode opcode = header->type3.opcode;
+        DriveclubPC::DiagTables::t_cp_packet = (3u << 8) | static_cast<u32>(opcode);
 
         const auto* it_body = reinterpret_cast<const u32*>(header) + 1;
         switch (opcode) {

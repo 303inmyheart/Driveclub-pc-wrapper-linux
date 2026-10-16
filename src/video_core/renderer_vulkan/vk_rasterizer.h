@@ -87,6 +87,11 @@ public:
         return IsMapped(addr, size) && buffer_cache.IsRegionGpuModified(addr, size) &&
                !buffer_cache.IsGpuData(addr, size);
     }
+    /// driveclub-pc: true when some byte of the range holds GPU-written data not yet in guest
+    /// memory (byte precise with readback offload; conservatively true without it).
+    bool HasGpuData(VAddr addr, u64 size) {
+        return IsMapped(addr, size) && buffer_cache.IsGpuData(addr, size);
+    }
     bool IsMapped(VAddr addr, u64 size);
     void MapMemory(VAddr addr, u64 size);
     void RegisterMemory(VAddr addr, u64 size);

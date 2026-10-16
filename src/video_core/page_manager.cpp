@@ -725,19 +725,20 @@ struct SignalImpl : public PageManager::Impl {
             if (DriveclubPC::DiagTables::Active()) {
                 const u64 start = DriveclubPC::Profiler::NowNs();
                 const bool handled = rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
-                DriveclubPC::DiagTables::NoteFault(true,
+                DriveclubPC::DiagTables::NoteFault(true, false,
                                                    reinterpret_cast<u64>(Common::GetRip(context)),
                                                    addr, DriveclubPC::Profiler::NowNs() - start);
                 return handled;
             }
             return rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
         } else {
-            if (!is_gpu_thread && DriveclubPC::DiagTables::Active()) {
+            if (DriveclubPC::DiagTables::Active()) {
                 // driveclub-pc: which guest instruction reads GPU-written memory back.
+                const bool cpu_data = rasterizer->IsReadOfCpuDataOnGpuPage(addr, size);
                 const u64 start = DriveclubPC::Profiler::NowNs();
                 const bool handled = rasterizer->ReadMemory(addr, size, is_gpu_thread);
                 DriveclubPC::DiagTables::NoteFault(
-                    false, reinterpret_cast<u64>(Common::GetRip(context)), addr,
+                    false, cpu_data, reinterpret_cast<u64>(Common::GetRip(context)), addr,
                     DriveclubPC::Profiler::NowNs() - start);
                 return handled;
             }
