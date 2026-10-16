@@ -20,6 +20,7 @@
 #include "common/path_util.h"
 #include "common/rdtsc.h"
 #include "driveclub/frame_profiler.h"
+#include "driveclub/vk_call_stats.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -150,7 +151,8 @@ bool Decide() {
             }
             std::fprintf(g_writer.file,
                          ",template_updates,descriptor_pushes,descriptor_writes,"
-                         "descriptor_elements,descriptor_gap_fills,empty_queue_skips\n");
+                         "descriptor_elements,descriptor_gap_fills,empty_queue_skips,"
+                         "vk_cp_calls,vk_cp_ms,vk_other_ms\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
             if (const char* at = std::getenv("DCPC_TRACE_AT")) {
                 g_trace_at_s = std::atof(at);
@@ -533,14 +535,18 @@ void OnGuestFrame() {
         std::fprintf(w.file, ",%llu,%.3f,%.3f", static_cast<unsigned long long>(Take(c.count)),
                      Ms(Take(c.ns)), Ms(Take(c.cp_ns)));
     }
+    u64 vk_cp_calls = 0;
+    double vk_cp_ms = 0, vk_other_ms = 0;
+    VkCallStats::TakeFrame(vk_cp_calls, vk_cp_ms, vk_other_ms);
     std::fprintf(
-        w.file, ",%llu,%llu,%llu,%llu,%llu,%llu\n",
+        w.file, ",%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.3f,%.3f\n",
         static_cast<unsigned long long>(Delta(g_cp.template_updates, w.template_updates)),
         static_cast<unsigned long long>(Delta(g_cp.descriptor_pushes, w.descriptor_pushes)),
         static_cast<unsigned long long>(Delta(g_cp.descriptor_writes, w.descriptor_writes)),
         static_cast<unsigned long long>(Delta(g_cp.descriptor_elements, w.descriptor_elements)),
         static_cast<unsigned long long>(Delta(g_cp.descriptor_gap_fills, w.descriptor_gap_fills)),
-        static_cast<unsigned long long>(Delta(g_cp.empty_queue_skips, w.empty_queue_skips)));
+        static_cast<unsigned long long>(Delta(g_cp.empty_queue_skips, w.empty_queue_skips)),
+        static_cast<unsigned long long>(vk_cp_calls), vk_cp_ms, vk_other_ms);
     ++w.frame;
     g_frames.store(w.frame, std::memory_order_relaxed);
     if ((w.frame & 63) == 0) {

@@ -1355,6 +1355,8 @@ add_executable(shadps4
     src/driveclub/frame_rate.h
     src/driveclub/deferred_recording.cpp
     src/driveclub/deferred_recording.h
+    src/driveclub/vk_call_stats.cpp
+    src/driveclub/vk_call_stats.h
     src/driveclub/vkcmd_list.inc
     src/driveclub/image_recycler.cpp
     src/driveclub/image_recycler.h

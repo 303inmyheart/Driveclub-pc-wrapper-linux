@@ -9,10 +9,11 @@
 #include "common/debug.h"
 #include "common/types.h"
 #include "core/emulator_settings.h"
+#include "driveclub/deferred_recording.h"
+#include "driveclub/vk_call_stats.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
-#include "driveclub/deferred_recording.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 
@@ -595,6 +596,8 @@ bool Instance::CreateDevice() {
     device = std::move(dev);
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
+    // Before deferred recording, which then calls through the statistics thunks.
+    DriveclubPC::VkCallStats::Install();
     DriveclubPC::DeferredRecording::Install();
 
     graphics_queue = device->getQueue(queue_family_index, 0);
