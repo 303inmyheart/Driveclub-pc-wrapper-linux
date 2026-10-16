@@ -32,9 +32,10 @@ struct Stat {
 };
 
 std::mutex g_mutex;
-// (rip, page, thread) -> stat
-std::map<std::tuple<u64, u64, std::string>, Stat> g_faults;
-std::map<u64, Stat> g_downloads;
+// (write, rip, page, thread) -> stat
+std::map<std::tuple<bool, u64, u64, std::string>, Stat> g_faults;
+// (window, thread) -> stat
+std::map<std::pair<u64, std::string>, Stat> g_downloads;
 // (site, address, width, height, format, tile) -> creates (count) / bytes = guest size
 using ImageKey = std::tuple<u32, u64, u32, u32, u32, u32>;
 std::map<ImageKey, Stat> g_images;
@@ -58,11 +59,11 @@ void Write() {
     std::scoped_lock lk{g_mutex};
     const double frames = std::max<double>(1.0, static_cast<double>(g_frames));
     if (std::FILE* f = Open("readback_faults.csv")) {
-        std::fprintf(f, "# %llu guest frames\nrip,page,thread,count,per_frame,total_ms,us_each\n",
+        std::fprintf(f, "# %llu guest frames\nkind,rip,page,thread,count,per_frame,total_ms,us_each\n",
                      static_cast<unsigned long long>(g_frames));
         for (const auto& [key, s] : Sorted(g_faults, 0)) {
-            const auto& [rip, page, thread] = key;
-            std::fprintf(f, "%#llx,%#llx,\"%s\",%llu,%.3f,%.3f,%.1f\n",
+            const auto& [write, rip, page, thread] = key;
+            std::fprintf(f, "%s,%#llx,%#llx,\"%s\",%llu,%.3f,%.3f,%.1f\n", write ? "write" : "read",
                          static_cast<unsigned long long>(rip), static_cast<unsigned long long>(page),
                          thread.c_str(), static_cast<unsigned long long>(s.count),
                          s.count / frames, s.ns / 1e6, s.ns / 1e3 / s.count);
@@ -70,11 +71,12 @@ void Write() {
         std::fclose(f);
     }
     if (std::FILE* f = Open("readback_downloads.csv")) {
-        std::fprintf(f, "# %llu guest frames\nwindow,count,per_frame,bytes_each,total_ms,us_each\n",
+        std::fprintf(f, "# %llu guest frames\nwindow,thread,count,per_frame,bytes_each,total_ms,us_each\n",
                      static_cast<unsigned long long>(g_frames));
-        for (const auto& [window, s] : Sorted(g_downloads, 0)) {
-            std::fprintf(f, "%#llx,%llu,%.3f,%.0f,%.3f,%.1f\n",
-                         static_cast<unsigned long long>(window),
+        for (const auto& [key, s] : Sorted(g_downloads, 0)) {
+            const auto& [window, thread] = key;
+            std::fprintf(f, "%#llx,\"%s\",%llu,%.3f,%.0f,%.3f,%.1f\n",
+                         static_cast<unsigned long long>(window), thread.c_str(),
                          static_cast<unsigned long long>(s.count), s.count / frames,
                          static_cast<double>(s.bytes) / s.count, s.ns / 1e6,
                          s.ns / 1e3 / s.count);
@@ -106,13 +108,13 @@ bool Active() {
     return g_active.load(std::memory_order_relaxed);
 }
 
-void NoteReadFault(u64 rip, u64 address, u64 ns) {
-    if (!Active()) {
+void NoteFault(bool write, u64 rip, u64 address, u64 ns) {
+    if (!Active() || (write && ns < 50'000)) {
         return;
     }
     std::string thread = Common::GetCurrentThreadName();
     std::scoped_lock lk{g_mutex};
-    auto& s = g_faults[{rip, address & ~u64{0xFFF}, std::move(thread)}];
+    auto& s = g_faults[{write, rip, address & ~u64{0xFFF}, std::move(thread)}];
     ++s.count;
     s.ns += ns;
 }
@@ -121,8 +123,9 @@ void NoteDownload(u64 window, u64 bytes, u64 ns) {
     if (!Active()) {
         return;
     }
+    std::string thread = Common::GetCurrentThreadName();
     std::scoped_lock lk{g_mutex};
-    auto& s = g_downloads[window];
+    auto& s = g_downloads[{window, std::move(thread)}];
     ++s.count;
     s.ns += ns;
     s.bytes += bytes;

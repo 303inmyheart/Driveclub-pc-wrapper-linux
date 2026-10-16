@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <type_traits>
+#include <unordered_map>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
@@ -739,6 +740,18 @@ private:
 
     void GarbageCollectImages();
     void GarbageCollectSamplers();
+
+    // driveclub-pc: the game uses some surfaces as D32 depth and as R32F colour in every frame;
+    // ResolveDepthOverlap recreated the other alias each time (create + delete per switch).
+    // DCPC_DEPTH_ALIAS=1 parks the replaced image and reuses it on the next switch (the contents
+    // are still copied); DCPC_DEPTH_ALIAS_AB=1 alternates every 20 s (profiler phase bit 1).
+    bool DepthAliasParking();
+    ImageId TakeParkedAlias(const ImageInfo& info);
+    void ParkAlias(ImageId image_id);
+    void ReleaseParkedAliases(VAddr address, u64 size);
+    std::mutex parked_aliases_mutex_;
+    std::unordered_map<VAddr, ImageId> parked_aliases_;
+    int depth_alias_state_ = -1;
 
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;

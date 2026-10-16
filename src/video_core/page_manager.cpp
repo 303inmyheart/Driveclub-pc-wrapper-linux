@@ -607,8 +607,8 @@ bool ReadbackFeaturesActive() {
         const char* env = std::getenv("DCPC_READBACK_AB");
         const bool on = env && std::strtoul(env, nullptr, 10) != 0;
         if (on) {
-            DriveclubPC::Profiler::SetPhase(1);
-            LOG_INFO(Render, "GPU readback features alternate every 10 s (profiler phase 1 = on)");
+            DriveclubPC::Profiler::SetPhaseBit(0, true);
+            LOG_INFO(Render, "GPU readback features alternate every 10 s (profiler phase bit 0 = on)");
         }
         return on;
     }();
@@ -627,7 +627,7 @@ bool ReadbackFeaturesActive() {
                phase_start_ns.compare_exchange_strong(start, now)) {
         const bool next = !active.load(std::memory_order_relaxed);
         active.store(next, std::memory_order_relaxed);
-        DriveclubPC::Profiler::SetPhase(next ? 1 : 0);
+        DriveclubPC::Profiler::SetPhaseBit(0, next);
     }
     return active.load(std::memory_order_relaxed);
 }
@@ -722,14 +722,22 @@ struct SignalImpl : public PageManager::Impl {
         }
 #endif
         if (Common::IsWriteError(context)) {
+            if (DriveclubPC::DiagTables::Active()) {
+                const u64 start = DriveclubPC::Profiler::NowNs();
+                const bool handled = rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
+                DriveclubPC::DiagTables::NoteFault(true,
+                                                   reinterpret_cast<u64>(Common::GetRip(context)),
+                                                   addr, DriveclubPC::Profiler::NowNs() - start);
+                return handled;
+            }
             return rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
         } else {
             if (!is_gpu_thread && DriveclubPC::DiagTables::Active()) {
                 // driveclub-pc: which guest instruction reads GPU-written memory back.
                 const u64 start = DriveclubPC::Profiler::NowNs();
                 const bool handled = rasterizer->ReadMemory(addr, size, is_gpu_thread);
-                DriveclubPC::DiagTables::NoteReadFault(
-                    reinterpret_cast<u64>(Common::GetRip(context)), addr,
+                DriveclubPC::DiagTables::NoteFault(
+                    false, reinterpret_cast<u64>(Common::GetRip(context)), addr,
                     DriveclubPC::Profiler::NowNs() - start);
                 return handled;
             }

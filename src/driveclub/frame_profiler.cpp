@@ -472,6 +472,14 @@ void SetPhase(u32 phase) {
     g_phase.store(phase, std::memory_order_relaxed);
 }
 
+void SetPhaseBit(u32 bit, bool on) {
+    if (on) {
+        g_phase.fetch_or(1u << bit, std::memory_order_relaxed);
+    } else {
+        g_phase.fetch_and(~(1u << bit), std::memory_order_relaxed);
+    }
+}
+
 void NoteGpuWrite(u64 address, u32 queue) {
     if (Enabled()) {
         auto& w = g_label_writer[address];

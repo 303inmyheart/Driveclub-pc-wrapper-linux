@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
 #include <bit>
 #include <cstring>
 #include <limits>
@@ -367,6 +368,7 @@ void TextureCache::InvalidateMemoryFromGPU(VAddr address, size_t max_size) {
 }
 
 void TextureCache::UnmapMemory(VAddr cpu_addr, size_t size) {
+    ReleaseParkedAliases(cpu_addr, size);
     SmallVector<ImageId, 16> deleted_images;
     ForEachImageInRegion(cpu_addr, size, [&](ImageId id, Image&) { deleted_images.push_back(id); });
     for (const ImageId id : deleted_images) {
@@ -424,8 +426,16 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         auto new_info = requested_info;
         new_info.resources = std::max(requested_info.resources, cache_image.info.resources);
         new_info.UpdateSize();
-        const auto new_image_id = slot_images.Insert(instance, runtime, slot_image_views, new_info);
-        NoteImageEvent(0, new_info);
+        const bool park = DepthAliasParking();
+        ImageId new_image_id = park ? TakeParkedAlias(new_info) : ImageId{};
+        if (new_image_id) {
+            // A parked alias starts over like a new image; its Vulkan layout state stays valid.
+            slot_images[new_image_id].flags = ImageFlagBits::Dirty;
+            slot_images[new_image_id].MarkFastStateDirty();
+        } else {
+            new_image_id = slot_images.Insert(instance, runtime, slot_image_views, new_info);
+            NoteImageEvent(0, new_info);
+        }
         RegisterImage(new_image_id);
 
         // Inherit image usage
@@ -441,8 +451,12 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         new_image.info.meta_info.htile_clear_mask = 0;
         runtime.CopyColorAndDepth(&cache_image, &new_image);
 
-        // Free the cache image.
-        FreeImage(cache_image_id);
+        // Free (or park) the cache image.
+        if (park) {
+            ParkAlias(cache_image_id);
+        } else {
+            FreeImage(cache_image_id);
+        }
         return new_image_id;
     }
 
@@ -2036,6 +2050,92 @@ void TextureCache::GarbageCollectSamplers() {
     }
     if (erased) {
         sampler_memo_.fill({});
+    }
+}
+
+bool TextureCache::DepthAliasParking() {
+    static const int mode = [] {
+        const char* ab = std::getenv("DCPC_DEPTH_ALIAS_AB");
+        if (ab && ab[0] == '1') {
+            LOG_INFO(Render, "driveclub-pc: depth alias parking alternates every 20 s "
+                             "(profiler phase bit 1 = on)");
+            return 2;
+        }
+        const char* on = std::getenv("DCPC_DEPTH_ALIAS");
+        return on && on[0] == '1' ? 1 : 0;
+    }();
+    bool on = mode == 1;
+    if (mode == 2) {
+        on = ((std::chrono::steady_clock::now().time_since_epoch() / std::chrono::seconds(20)) &
+              1) == 0;
+    }
+    if (static_cast<int>(on) != depth_alias_state_) {
+        depth_alias_state_ = on;
+        if (mode == 2) {
+            DriveclubPC::Profiler::SetPhaseBit(1, on);
+        }
+        if (!on) {
+            ReleaseParkedAliases(0, ~u64{0});
+        }
+    }
+    return on;
+}
+
+ImageId TextureCache::TakeParkedAlias(const ImageInfo& info) {
+    std::scoped_lock lk{parked_aliases_mutex_};
+    const auto it = parked_aliases_.find(info.guest_address);
+    if (it == parked_aliases_.end()) {
+        return {};
+    }
+    const ImageId id = it->second;
+    parked_aliases_.erase(it);
+    const ImageInfo& parked = slot_images[id].info;
+    const bool match =
+        parked.pixel_format == info.pixel_format && parked.type == info.type &&
+        parked.size.width == info.size.width && parked.size.height == info.size.height &&
+        parked.size.depth == info.size.depth && parked.resources.levels == info.resources.levels &&
+        parked.resources.layers == info.resources.layers &&
+        parked.num_samples == info.num_samples && parked.guest_size == info.guest_size &&
+        parked.tile_mode == info.tile_mode && parked.props.is_depth == info.props.is_depth &&
+        parked.props.has_stencil == info.props.has_stencil;
+    if (!match) {
+        DeleteImage(id);
+        return {};
+    }
+    return id;
+}
+
+void TextureCache::ParkAlias(ImageId image_id) {
+    {
+        std::scoped_lock lk{slot_images[image_id].mutex};
+        UntrackImage(image_id);
+    }
+    UnregisterImage(image_id);
+    {
+        std::unique_lock lk{download_images_mutex};
+        download_images.erase(image_id);
+    }
+    PhotoReadback::Forget(image_id);
+    std::scoped_lock lk{parked_aliases_mutex_};
+    auto& slot = parked_aliases_[slot_images[image_id].info.guest_address];
+    if (slot && slot != image_id) {
+        DeleteImage(slot);
+    }
+    slot = image_id;
+}
+
+void TextureCache::ReleaseParkedAliases(VAddr address, u64 size) {
+    std::scoped_lock lk{parked_aliases_mutex_};
+    for (auto it = parked_aliases_.begin(); it != parked_aliases_.end();) {
+        const Image& image = slot_images[it->second];
+        const VAddr begin = image.info.guest_address;
+        const VAddr end = begin + image.info.guest_size;
+        if (begin < address + size && address < end) {
+            DeleteImage(it->second);
+            it = parked_aliases_.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 

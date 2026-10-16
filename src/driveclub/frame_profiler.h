@@ -98,6 +98,9 @@ void AddGpuBatch(u64 ns);
 
 // A/B phase written with every frame (column "phase"), for features that alternate at run time.
 void SetPhase(u32 phase);
+// Sets one bit of the phase, for two independent A/B toggles in one run (bit 0 readback
+// features DCPC_READBACK_AB, bit 1 depth alias parking DCPC_DEPTH_ALIAS_AB).
+void SetPhaseBit(u32 bit, bool on);
 
 // Called by the command processor for every address a GPU queue writes (fences, labels).
 // queue: 0 = graphics, otherwise the Gnm virtual compute queue id.

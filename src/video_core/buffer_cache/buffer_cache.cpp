@@ -295,6 +295,11 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     DriveclubPC::Profiler::CostScope cost{DriveclubPC::Profiler::Cost::Download};
     const u64 diag_start =
         DriveclubPC::DiagTables::Active() ? DriveclubPC::Profiler::NowNs() : 0;
+    if (prefetch) {
+        // driveclub-pc: the synchronous path (command processor faults, offload fallback) took a
+        // window that is read back every frame; prefetch it after its next GPU write as well.
+        hot_windows[Common::AlignDown(device_addr, READBACK_WINDOW_SIZE)] = NowNs();
+    }
     DownloadCopies copies;
     const VAddr arena_base = arena->cpu_addr;
     u64 total_size_bytes = 0;
