@@ -16,6 +16,7 @@
 #include "core/libraries/kernel/threads/exception.h"
 #include "core/memory.h"
 #include "driveclub/frame_profiler.h"
+#include "driveclub/performance.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
@@ -370,7 +371,7 @@ bool BufferCache::OffloadReadback(VAddr device_addr, u64 size, bool is_write) {
             return true;
         }
         Readback job{.window = window};
-        liverpool->SendCommand<true>([this, &job] { RecordReadback(job); });
+        liverpool->SendCommand<true>([this, &job] { RecordReadback(job); }, true);
         if (job.busy) {
             std::unique_lock lk{readback_mutex};
             readback_cv.wait(lk, [&] { return !IsReadbackPending(window, READBACK_WINDOW_SIZE); });
@@ -423,8 +424,26 @@ void BufferCache::RecordReadback(Readback& job) {
     job.write_seq = memory_tracker->GpuWriteSeq(job.window, READBACK_WINDOW_SIZE);
     runtime.CopyBuffer(arena, job.staging.buffer, job.copies);
     job.tick = scheduler.CurrentTick();
+    // driveclub-pc: waiting guest threads retain the same timeline tick. DrainCommands submits
+    // the copies together before processing more PM4 work; no guest-visible wait is skipped.
+    if (DriveclubPC::Performance::Enabled(DriveclubPC::Performance::Feature::ReadbackBatch)) {
+        readback_batch_tick = job.tick;
+        return;
+    }
     DriveclubPC::Profiler::CostScope flush{DriveclubPC::Profiler::Cost::ReadbackFlush};
     scheduler.Flush();
+}
+
+void BufferCache::FlushReadbackBatch() {
+    if (!readback_batch_tick)
+        return;
+    const u64 tick = *readback_batch_tick;
+    readback_batch_tick.reset();
+    // A synchronous download or another queued callback may already have submitted this tick.
+    if (scheduler.CurrentTick() == tick) {
+        DriveclubPC::Profiler::CostScope flush{DriveclubPC::Profiler::Cost::ReadbackFlush};
+        scheduler.Flush();
+    }
 }
 
 u64 BufferCache::ClaimReadbackWindow(const Buffer* arena, VAddr window, DownloadCopies& copies) {

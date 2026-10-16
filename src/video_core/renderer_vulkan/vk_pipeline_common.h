@@ -137,8 +137,21 @@ public:
     // matched or populated, 0xFFFF none. Never serialized.
     static constexpr u32 kImageMemoHints = 32;
     mutable std::array<u16, kImageMemoHints> image_memo_hint;
+    // driveclub-pc: hint indices never certify identity; the texture cache rechecks both words.
+    mutable std::array<u16, 32> sampler_memo_hint;
 
 protected:
+    bool UpdateWithTemplate(vk::CommandBuffer cmd, vk::DescriptorSet set,
+                            std::span<const vk::WriteDescriptorSet> writes, u32 buffer_count,
+                            u32 image_count, u64 mask) const;
+    struct UpdateTemplate {
+        u64 mask{};
+        vk::UniqueDescriptorUpdateTemplate handle;
+    };
+    // Bounded, no eviction: unfamiliar partial shapes retain the existing update path.
+    mutable std::array<UpdateTemplate, 16> update_templates;
+    mutable u32 update_template_count{};
+    mutable bool update_template_failed{};
     [[nodiscard]] std::string GetDebugString() const;
     /// Takes the pipeline's layouts from the shared cache, or creates owned ones.
     void AssignLayouts(std::span<const vk::DescriptorSetLayoutBinding> bindings,

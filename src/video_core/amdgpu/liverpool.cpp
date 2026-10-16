@@ -326,17 +326,28 @@ Liverpool::~Liverpool() {
 }
 
 void Liverpool::DrainCommands() {
+    u32 drained = 0;
     // Process incoming commands with high priority
     while (num_commands) {
         Common::UniqueFunction<void> callback{};
+        bool readback = false;
         {
             std::scoped_lock lk{submit_mutex};
-            callback = std::move(command_queue.front());
+            readback = command_queue.front().readback;
+            callback = std::move(command_queue.front().callback);
             command_queue.pop();
             --num_commands;
         }
+        if (!readback && rasterizer)
+            rasterizer->GetBufferCache().FlushReadbackBatch();
         callback();
+        // driveclub-pc: bound the delay even if producers keep adding commands continuously.
+        if (++drained % 16 == 0 && rasterizer) {
+            rasterizer->GetBufferCache().FlushReadbackBatch();
+        }
     }
+    if (rasterizer)
+        rasterizer->GetBufferCache().FlushReadbackBatch();
 }
 
 // driveclub-pc: one backoff step while every queued task is blocked in a wait. Short pauses first

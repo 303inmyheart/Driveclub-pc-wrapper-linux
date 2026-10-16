@@ -313,6 +313,8 @@ private:
     bool findimg_hint_{};
     u16* image_hint_cur_{};
     u16* image_hint_end_{};
+    u16* sampler_hint_cur_{};
+    u16* sampler_hint_end_{};
     void SkipImageHints(size_t n) {
         image_hint_cur_ +=
             std::min<size_t>(n, static_cast<size_t>(image_hint_end_ - image_hint_cur_));

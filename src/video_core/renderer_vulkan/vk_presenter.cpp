@@ -11,6 +11,7 @@
 #include "core/emulator_settings.h"
 #include "core/libraries/system/systemservice.h"
 #include "driveclub/frame_profiler.h"
+#include "driveclub/performance.h"
 #include "imgui/friends_layer.h"
 #include "imgui/invitation_prompt_layer.h"
 #include "imgui/notifications_layer.h"
@@ -1174,6 +1175,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     free_frame();
     if (!is_reusing_frame && is_game_frame) {
         DebugState.IncFlipFrameNum();
+        DriveclubPC::Performance::OnGuestFrame();
         DriveclubPC::Profiler::OnGuestFrame();
     }
 }

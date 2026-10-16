@@ -44,6 +44,7 @@ struct SharedCounters {
 // Written only by the command processor thread: monotonically growing totals updated with plain
 // load+store (no lock prefix); the frame writer reads them and keeps the previous snapshot.
 struct CpCounters {
+    std::atomic<u64> template_updates{};
     std::atomic<u64> draws{};
     std::atomic<u64> dispatches{};
     std::atomic<u64> backoffs{};
@@ -98,6 +99,7 @@ struct Writer {
     double tsc_ticks_per_ns = 0.0;
     // previous snapshots of the CpCounters
     u64 draws = 0, dispatches = 0, backoffs = 0, waits = 0;
+    u64 template_updates = 0;
     u64 wait_gfx = 0, wait_asc = 0, wait_gpu = 0, wait_cpu = 0, gfx_late = 0, gfx_queued = 0;
 };
 Writer g_writer;
@@ -142,7 +144,7 @@ bool Decide() {
                  {"submit", "readback_record", "download", "readback_flush", "protect"}) {
                 std::fprintf(g_writer.file, ",%s_count,%s_ms,%s_cp_ms", name, name, name);
             }
-            std::fprintf(g_writer.file, "\n");
+            std::fprintf(g_writer.file, ",template_updates\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
             if (const char* at = std::getenv("DCPC_TRACE_AT")) {
                 g_trace_at_s = std::atof(at);
@@ -292,6 +294,10 @@ void AddDispatch() {
 }
 void AddBackoff() {
     Bump(g_cp.backoffs, 1);
+}
+void AddTemplateUpdate() {
+    if (Enabled())
+        Bump(g_cp.template_updates, 1);
 }
 
 namespace {
@@ -504,7 +510,8 @@ void OnGuestFrame() {
         std::fprintf(w.file, ",%llu,%.3f,%.3f", static_cast<unsigned long long>(Take(c.count)),
                      Ms(Take(c.ns)), Ms(Take(c.cp_ns)));
     }
-    std::fprintf(w.file, "\n");
+    std::fprintf(w.file, ",%llu\n",
+                 static_cast<unsigned long long>(Delta(g_cp.template_updates, w.template_updates)));
     ++w.frame;
     g_frames.store(w.frame, std::memory_order_relaxed);
     if ((w.frame & 63) == 0) {

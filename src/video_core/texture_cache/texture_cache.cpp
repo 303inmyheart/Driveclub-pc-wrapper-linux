@@ -1497,7 +1497,7 @@ void TextureCache::RefreshImage(Image& image) {
 
 vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sharp,
                                      AmdGpu::BorderColorBuffer border_color_base,
-                                     const bool is_depth) {
+                                     const bool is_depth, u16* hint) {
     using namespace VideoCore::Skipcache;
     auto& sc = Framework::Instance();
     constexpr auto kCache = CacheId::Sampler;
@@ -1509,6 +1509,20 @@ vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sharp,
     constexpr u64 kReservedBits = u64{0x3FFFF} << 44;
     auto raw = std::bit_cast<std::array<u64, 2>>(sharp);
     raw[1] = (raw[1] & ~kReservedBits) | (u64{is_depth} << 44);
+    // driveclub-pc: a binding-local probe avoids hashing; GC clears handles and both key words
+    // must still match, so neither a stale hint nor a reused entry can return the wrong sampler.
+    const bool fast_active = sc.ActiveMode() == Mode::Adaptive || sc.ActiveMode() == Mode::Forced;
+    if (fast_active && hint && *hint < sampler_memo_.size()) {
+        auto& cached = sampler_memo_[*hint];
+        if (cached.handle && cached.key[0] == raw[0] && cached.key[1] == raw[1]) {
+            if (cached.touch_tick != static_cast<u32>(gc_tick)) {
+                sampler_lru_cache.Touch(slot_samplers[cached.id], gc_tick);
+                cached.touch_tick = static_cast<u32>(gc_tick);
+                ++sampler_touches_;
+            }
+            return cached.handle;
+        }
+    }
     // Every S# field reaches the set index: the filters, max_lod, border color
     // and clamp modes all sit above the low bits of either word.
     const u64 mix = (raw[0] ^ (raw[1] * 0x9E3779B97F4A7C15ULL)) * 0xC2B2AE3D27D4EB4FULL;
@@ -1521,8 +1535,9 @@ vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sharp,
     } else if (set[1].handle && set[1].key[0] == raw[0] && set[1].key[1] == raw[1]) {
         e = &set[1];
     }
-    const bool fast_active = sc.ActiveMode() == Mode::Adaptive || sc.ActiveMode() == Mode::Forced;
     if (fast_active && e) {
+        if (hint)
+            *hint = static_cast<u16>(e - sampler_memo_.data());
         // An equal touch tick makes the LRU touch a no-op, so the hit reduces
         // to returning the memoized handle.
         if (e->touch_tick != static_cast<u32>(gc_tick)) {
@@ -1608,6 +1623,8 @@ vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sharp,
             .id = it->second,
             .touch_tick = static_cast<u32>(gc_tick),
         };
+        if (hint)
+            *hint = static_cast<u16>(victim - sampler_memo_.data());
         if (probing) {
             sc.NotifyPopulated(kCache);
         }

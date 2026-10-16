@@ -83,6 +83,8 @@ public:
     }
 
     void TickFrame();
+    // driveclub-pc: flush recorded fault readbacks before the command drain returns to PM4 work.
+    void FlushReadbackBatch();
 
     /// Invalidates any buffer in the logical page range.
     void InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks = false);
@@ -212,6 +214,7 @@ private:
     std::unique_ptr<FaultManager> fault_manager;
     std::unique_ptr<Buffer> bda_pagetable_buffer;
     bool fault_process_pending{};
+    std::optional<u64> readback_batch_tick;
 
     std::array<const Buffer*, NUM_ARENA_PAGES> address_space{};
     std::deque<Buffer> arenas;

@@ -13,6 +13,8 @@
 #include <boost/container/static_vector.hpp>
 #include "common/assert.h"
 #include "common/logging/log.h"
+#include "driveclub/performance.h"
+#include "driveclub/frame_profiler.h"
 
 #include "core/emulator_settings.h"
 #include "shader_recompiler/resource.h"
@@ -454,6 +456,101 @@ Pipeline::Pipeline(const Instance& instance_, Scheduler& scheduler_, DescriptorH
     : instance{instance_}, scheduler{scheduler_}, desc_heap{desc_heap_}, profile{profile_},
       layouts{layouts_}, is_compute{is_compute_}, direct_push{instance_.IsMaintenance6Supported()} {
     image_memo_hint.fill(0xFFFF);
+    sampler_memo_hint.fill(0xFFFF);
+}
+
+// driveclub-pc: precompile the invariant write shape instead of asking the driver to parse
+// VkWriteDescriptorSet headers on every draw. Exact flat-plan extents gate every use.
+bool Pipeline::UpdateWithTemplate(vk::CommandBuffer cmd, vk::DescriptorSet set,
+                                  std::span<const vk::WriteDescriptorSet> writes, u32 buffer_count,
+                                  u32 image_count, u64 mask) const {
+    if (!DriveclubPC::Performance::Enabled(
+            DriveclubPC::Performance::Feature::DescriptorTemplates) ||
+        !bind_plan.flat || writes.data() != bind_plan.writes.get() ||
+        buffer_count != bind_plan.buffer_descs || image_count != bind_plan.image_descs ||
+        buffer_count + image_count == 0 || update_template_failed) {
+        return false;
+    }
+    const u32 total = buffer_count + image_count;
+    mask &= (u64{1} << total) - 1;
+    if (!mask)
+        return false;
+    vk::DescriptorUpdateTemplate handle{};
+    for (u32 i = 0; i < update_template_count; ++i) {
+        if (update_templates[i].mask == mask) {
+            handle = update_templates[i].handle.get();
+            break;
+        }
+    }
+    if (!handle) {
+        if (update_template_count == update_templates.size())
+            return false;
+        std::array<vk::DescriptorUpdateTemplateEntry, 64> entries{};
+        u32 entry_count = 0;
+        for (size_t w = 0; w < writes.size(); ++w) {
+            const auto& write = writes[w];
+            const u32 first = bind_plan.first_desc[w];
+            for (u32 i = 0; i < write.descriptorCount;) {
+                if (!(mask & (u64{1} << (first + i)))) {
+                    ++i;
+                    continue;
+                }
+                const u32 begin = i++;
+                while (i < write.descriptorCount && (mask & (u64{1} << (first + i))))
+                    ++i;
+                entries[entry_count++] = {
+                    .dstBinding = write.dstBinding,
+                    .dstArrayElement = write.dstArrayElement + begin,
+                    .descriptorCount = i - begin,
+                    .descriptorType = write.descriptorType,
+                    .offset = size_t{first + begin} * 24,
+                    .stride = 24,
+                };
+            }
+        }
+        const auto device = instance.GetDevice();
+        auto [result, created] = device.createDescriptorUpdateTemplateUnique({
+            .descriptorUpdateEntryCount = entry_count,
+            .pDescriptorUpdateEntries = entries.data(),
+            .templateType = uses_push_descriptors
+                                ? vk::DescriptorUpdateTemplateType::ePushDescriptors
+                                : vk::DescriptorUpdateTemplateType::eDescriptorSet,
+            .descriptorSetLayout = desc_layout,
+            .pipelineBindPoint =
+                IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics,
+            .pipelineLayout = pipeline_layout,
+            .set = 0,
+        });
+        if (result != vk::Result::eSuccess) {
+            update_template_failed = true;
+            LOG_WARNING(Render_Vulkan,
+                        "driveclub-pc: descriptor template failed: {}; retaining write path",
+                        vk::to_string(result));
+            return false;
+        }
+        auto& cached = update_templates[update_template_count++];
+        cached.mask = mask;
+        cached.handle = std::move(created);
+        handle = cached.handle.get();
+    }
+    alignas(8) std::array<u8, 63 * 24> payload;
+    if (buffer_count)
+        std::memcpy(payload.data(), bind_plan.buffer_base, size_t{buffer_count} * 24);
+    if (image_count)
+        std::memcpy(payload.data() + size_t{buffer_count} * 24, bind_plan.image_base,
+                    size_t{image_count} * 24);
+    if (uses_push_descriptors) {
+        // Hpp's enhanced overload takes &data: a typed pointer would pass a pointer-to-pointer.
+        VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdPushDescriptorSetWithTemplateKHR(
+            static_cast<VkCommandBuffer>(cmd), static_cast<VkDescriptorUpdateTemplate>(handle),
+            static_cast<VkPipelineLayout>(pipeline_layout), 0, payload.data());
+    } else {
+        VULKAN_HPP_DEFAULT_DISPATCHER.vkUpdateDescriptorSetWithTemplate(
+            static_cast<VkDevice>(instance.GetDevice()), static_cast<VkDescriptorSet>(set),
+            static_cast<VkDescriptorUpdateTemplate>(handle), payload.data());
+    }
+    DriveclubPC::Profiler::AddTemplateUpdate();
+    return true;
 }
 
 void Pipeline::AssignLayouts(std::span<const vk::DescriptorSetLayoutBinding> bindings,
@@ -511,6 +608,9 @@ Pipeline::~Pipeline() {
 void Pipeline::BindResources(std::span<vk::WriteDescriptorSet> set_writes,
                              const Shader::PushData& push_data, u32 buffer_info_n,
                              u32 image_info_n) const {
+    // driveclub-pc: don't enter the large template helper's stack frame when the trial is off.
+    const bool use_templates =
+        DriveclubPC::Performance::Enabled(DriveclubPC::Performance::Feature::DescriptorTemplates);
     const auto cmdbuf = scheduler.CommandBuffer();
     const auto bind_point =
         IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
@@ -712,8 +812,13 @@ void Pipeline::BindResources(std::span<vk::WriteDescriptorSet> set_writes,
                     ++slot.split;
                 }
             }
-            PushSet(cmdbuf, direct_push, stage_flags, pipeline_layout, bind_point, push_count,
-                    push_writes);
+            const u64 template_mask =
+                flat && push_writes == partial_scratch.data() ? slot.mask : ~u64{0};
+            if (!use_templates || !UpdateWithTemplate(cmdbuf, {}, set_writes, buffer_info_n,
+                                                      image_info_n, template_mask)) {
+                PushSet(cmdbuf, direct_push, stage_flags, pipeline_layout, bind_point, push_count,
+                        push_writes);
+            }
             if (timed_miss) {
                 ctr.miss_ns += sc.CorrectSample(sc.Now() - m0);
                 ++ctr.miss_samples;
@@ -742,8 +847,11 @@ void Pipeline::BindResources(std::span<vk::WriteDescriptorSet> set_writes,
             }
             return;
         }
-        PushSet(cmdbuf, direct_push, stage_flags, pipeline_layout, bind_point,
-                static_cast<u32>(set_writes.size()), set_writes.data());
+        if (!use_templates ||
+            !UpdateWithTemplate(cmdbuf, {}, set_writes, buffer_info_n, image_info_n, ~u64{0})) {
+            PushSet(cmdbuf, direct_push, stage_flags, pipeline_layout, bind_point,
+                    static_cast<u32>(set_writes.size()), set_writes.data());
+        }
         return;
     }
 
@@ -772,10 +880,13 @@ void Pipeline::BindResources(std::span<vk::WriteDescriptorSet> set_writes,
     hs.heap_samplers += samplers;
     const u32 limit = instance.MaxPushDescriptors();
     ++hs.heap_hist[descs <= limit ? 0 : descs <= 40 ? 1 : descs <= 48 ? 2 : descs <= 64 ? 3 : 4];
-    instance.GetDevice().updateDescriptorSets(
-        vk::ArrayProxy<const vk::WriteDescriptorSet>(static_cast<uint32_t>(set_writes.size()),
-                                                     set_writes.data()),
-        {});
+    if (!use_templates ||
+        !UpdateWithTemplate(cmdbuf, desc_set, set_writes, buffer_info_n, image_info_n, ~u64{0})) {
+        instance.GetDevice().updateDescriptorSets(
+            vk::ArrayProxy<const vk::WriteDescriptorSet>(static_cast<uint32_t>(set_writes.size()),
+                                                         set_writes.data()),
+            {});
+    }
     cmdbuf.bindDescriptorSets(bind_point, pipeline_layout, 0, desc_set, {});
     // The heap set replaces this bind point's set 0 behind the delta cache;
     // the bump makes its next probe miss.

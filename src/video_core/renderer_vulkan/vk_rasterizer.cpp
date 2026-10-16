@@ -10,6 +10,7 @@
 #include "common/rdtsc.h"
 
 #include "common/debug.h"
+#include "driveclub/performance.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
@@ -1469,6 +1470,13 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
         image_hint_cur_ = image_hint_end_ = nullptr;
     }
 
+    // driveclub-pc: hints are optional probe-order shortcuts, with full key validation.
+    if (DriveclubPC::Performance::Enabled(DriveclubPC::Performance::Feature::SamplerHints)) {
+        sampler_hint_cur_ = pipeline->sampler_memo_hint.data();
+        sampler_hint_end_ = sampler_hint_cur_ + pipeline->sampler_memo_hint.size();
+    } else {
+        sampler_hint_cur_ = sampler_hint_end_ = nullptr;
+    }
     bool uses_dma = false;
 
     // Bind resource buffers and textures.
@@ -2379,8 +2387,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
                         liverpool->regs.ta_bc_base.Address());
             ssharp = AmdGpu::Sampler{};
         }
+        u16* hint = sampler_hint_cur_ != sampler_hint_end_ ? sampler_hint_cur_++ : nullptr;
         const auto vk_sampler =
-            texture_cache.GetSampler(ssharp, liverpool->regs.ta_bc_base, sampler.is_depth);
+            texture_cache.GetSampler(ssharp, liverpool->regs.ta_bc_base, sampler.is_depth, hint);
         AppendImageInfo(image_infos, vk_sampler, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
     }
 

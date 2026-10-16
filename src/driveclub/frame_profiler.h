@@ -47,6 +47,8 @@ void AddPipeline(u64 ns);
 void AddDraw();
 void AddDispatch();
 void AddBackoff();
+// driveclub-pc: verifies that the Wave 2 fast path actually executes in each A/B phase.
+void AddTemplateUpdate();
 
 // A/B phase written with every frame (column "phase"), for features that alternate at run time.
 void SetPhase(u32 phase);
