@@ -46,8 +46,8 @@ struct Settings {
     int sharpening = 1; ///< 0 off, 1 normal, 2 strong
     int readbacks = 2;  ///< GPU readbacks: 0 off, 1 relaxed, 2 precise
     // driveclub-pc: image quality and hybrid CPU settings.
-    int af = 0;
-    int aa = 0;
+    int af = 16;
+    int aa = 1;
     bool pcore_pin = true;
     bool show_fps = false;
     bool deferred_recording = false;
@@ -89,10 +89,10 @@ Settings Load() {
     s.fsr = num("fsr", s.fsr) != 0;
     s.sharpening = std::clamp(num("sharpening", s.sharpening), 0, 2);
     s.readbacks = std::clamp(num("readbacks", s.readbacks), 0, 2);
-    s.af = num("af", 0);
+    s.af = num("af", s.af);
     if (s.af != 2 && s.af != 4 && s.af != 8 && s.af != 16)
         s.af = 0;
-    s.aa = std::clamp(num("aa", 0), 0, 2);
+    s.aa = std::clamp(num("aa", s.aa), 0, 2);
     s.pcore_pin = num("pcore_pin", 1) != 0;
     s.show_fps = num("show_fps", s.show_fps) != 0;
     s.deferred_recording = num("deferred_recording", s.deferred_recording) != 0;
@@ -463,7 +463,7 @@ void BuildControls() {
                       : 0);
     y += Row;
     Label(L"Anti-aliasing", L, y, 140);
-    Combo(IdAa, C, y, W, {L"Off (default)", L"FXAA", L"SMAA 1x (High)"}, s.aa);
+    Combo(IdAa, C, y, W, {L"Off", L"FXAA (default)", L"SMAA 1x (High)"}, s.aa);
     y += Row;
 
     Label(L"GPU readbacks", L, y, 140);

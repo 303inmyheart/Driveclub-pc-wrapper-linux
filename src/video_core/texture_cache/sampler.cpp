@@ -15,7 +15,7 @@ Sampler::Sampler(const Vulkan::Instance& instance, const AmdGpu::Sampler& sample
     // driveclub-pc: Off preserves game samplers; override only linear, mipmapped colour sampling.
     static const int override_af = [] {
         const char* env = std::getenv("DCPC_AF");
-        const int value = env ? std::atoi(env) : 0;
+        const int value = env ? std::atoi(env) : 16;
         return value == 2 || value == 4 || value == 8 || value == 16 ? value : 0;
     }();
     const bool force_af = override_af && !is_depth && !sampler.force_unnormalized &&

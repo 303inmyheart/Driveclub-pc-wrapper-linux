@@ -119,7 +119,7 @@ private:
     HostPasses::FsrPass fsr_pass;
     // driveclub-pc: AA consumes the game's internal resolution before FSR.
     HostPasses::AaPass aa_pass;
-    int aa_mode = 0;
+    int aa_mode = 1;
     HostPasses::FsrPass::Settings fsr_settings{};
     HostPasses::PostProcessingPass::Settings pp_settings{};
     HostPasses::PostProcessingPass pp_pass;
