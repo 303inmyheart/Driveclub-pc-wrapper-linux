@@ -401,6 +401,10 @@ void Liverpool::Process(std::stop_token stoken) {
             break;
         }
         const u64 busy_start = profile ? DriveclubPC::Profiler::NowNs() : 0;
+        // driveclub-pc: independent of the previously unsuccessful wait-loop backoff.
+        const bool fast_handoff =
+            DriveclubPC::Performance::Enabled(DriveclubPC::Performance::Feature::SubmitHandoff);
+        u64 empty_queue_skips = 0;
         if (profile) {
             DriveclubPC::Profiler::AddCpIdle(busy_start - idle_start);
         }
@@ -424,8 +428,12 @@ void Liverpool::Process(std::stop_token stoken) {
 
             auto& queue = mapped_queues[curr_qid];
 
-            if (cp_backoff && queue.pending.load(std::memory_order_acquire) == 0) {
-                if (++visits_without_progress >= num_mapped_queues) {
+            if ((cp_backoff || fast_handoff) &&
+                queue.pending.load(std::memory_order_acquire) == 0) {
+                if (fast_handoff) {
+                    ++empty_queue_skips;
+                }
+                if (cp_backoff && ++visits_without_progress >= num_mapped_queues) {
                     visits_without_progress = 0;
                     CpBackoff(rounds_without_progress++);
                 }
@@ -482,6 +490,7 @@ void Liverpool::Process(std::stop_token stoken) {
 
         Platform::IrqC::Instance()->Signal(Platform::InterruptId::GpuIdle);
         if (profile) {
+            DriveclubPC::Profiler::AddEmptyQueueSkips(empty_queue_skips);
             DriveclubPC::Profiler::AddCpBusy(DriveclubPC::Profiler::NowNs() - busy_start);
         }
     }
@@ -1678,9 +1687,9 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
         queue.pending.fetch_add(1, std::memory_order_release);
     }
 
-    std::scoped_lock lk{submit_mutex};
+    std::unique_lock lk{submit_mutex};
     ++num_submits;
-    submit_cv.notify_one();
+    WakeCommandProcessor(lk);
 }
 
 void Liverpool::SubmitAsc(u32 gnm_vqid, std::span<const u32> acb) {
@@ -1696,10 +1705,10 @@ void Liverpool::SubmitAsc(u32 gnm_vqid, std::span<const u32> acb) {
         queue.pending.fetch_add(1, std::memory_order_release);
     }
 
-    std::scoped_lock lk{submit_mutex};
+    std::unique_lock lk{submit_mutex};
     num_mapped_queues = std::max(num_mapped_queues, gnm_vqid + 1);
     ++num_submits;
-    submit_cv.notify_one();
+    WakeCommandProcessor(lk);
 }
 
 } // namespace AmdGpu

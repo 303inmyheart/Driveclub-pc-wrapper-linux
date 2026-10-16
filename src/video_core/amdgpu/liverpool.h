@@ -17,6 +17,7 @@
 #include "common/slot_vector.h"
 #include "common/types.h"
 #include "common/unique_function.h"
+#include "driveclub/performance.h"
 #include "video_core/amdgpu/cb_db_extent.h"
 #include "video_core/amdgpu/gfx_state_stamp.h"
 #include "video_core/amdgpu/regs.h"
@@ -77,11 +78,11 @@ public:
     void SubmitAsc(u32 gnm_vqid, std::span<const u32> acb);
 
     void SubmitDone() noexcept {
-        std::scoped_lock lk{submit_mutex};
+        std::unique_lock lk{submit_mutex};
         mapped_queues[GfxQueueId].ccb_buffer_offset = 0;
         mapped_queues[GfxQueueId].dcb_buffer_offset = 0;
         submit_done = true;
-        submit_cv.notify_one();
+        WakeCommandProcessor(lk);
     }
 
     void WaitGpuIdle() noexcept {
@@ -141,21 +142,21 @@ public:
         if constexpr (wait_done) {
             std::binary_semaphore sem{0};
             {
-                std::scoped_lock lk{submit_mutex};
+                std::unique_lock lk{submit_mutex};
                 command_queue.push(Command{[&sem, &func] {
                                                func();
                                                sem.release();
                                            },
                                            readback});
                 ++num_commands;
-                submit_cv.notify_one();
+                WakeCommandProcessor(lk);
             }
             sem.acquire();
         } else {
-            std::scoped_lock lk{submit_mutex};
+            std::unique_lock lk{submit_mutex};
             command_queue.push(Command{std::move(func), readback});
             ++num_commands;
-            submit_cv.notify_one();
+            WakeCommandProcessor(lk);
         }
     }
 
@@ -262,6 +263,14 @@ private:
     Task ProcessCeUpdate(std::span<const u32> ccb);
     template <bool is_indirect = false>
     Task ProcessCompute(std::span<const u32> acb, u32 vqid);
+
+    // driveclub-pc: publish work under the mutex, then let the awakened consumer acquire it.
+    void WakeCommandProcessor(std::unique_lock<std::mutex>& lock) {
+        if (DriveclubPC::Performance::Enabled(DriveclubPC::Performance::Feature::SubmitHandoff)) {
+            lock.unlock();
+        }
+        submit_cv.notify_one();
+    }
 
     /// Draw-rate callers poll this with an empty queue in steady state; the
     /// inline gate spares them the call.

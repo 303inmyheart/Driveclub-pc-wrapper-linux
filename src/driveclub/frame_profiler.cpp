@@ -44,6 +44,8 @@ struct SharedCounters {
 // Written only by the command processor thread: monotonically growing totals updated with plain
 // load+store (no lock prefix); the frame writer reads them and keeps the previous snapshot.
 struct CpCounters {
+    std::atomic<u64> descriptor_pushes{}, descriptor_writes{}, descriptor_elements{};
+    std::atomic<u64> descriptor_gap_fills{}, empty_queue_skips{};
     std::atomic<u64> template_updates{};
     std::atomic<u64> draws{};
     std::atomic<u64> dispatches{};
@@ -100,6 +102,8 @@ struct Writer {
     // previous snapshots of the CpCounters
     u64 draws = 0, dispatches = 0, backoffs = 0, waits = 0;
     u64 template_updates = 0;
+    u64 descriptor_pushes = 0, descriptor_writes = 0, descriptor_elements = 0;
+    u64 descriptor_gap_fills = 0, empty_queue_skips = 0;
     u64 wait_gfx = 0, wait_asc = 0, wait_gpu = 0, wait_cpu = 0, gfx_late = 0, gfx_queued = 0;
 };
 Writer g_writer;
@@ -144,7 +148,9 @@ bool Decide() {
                  {"submit", "readback_record", "download", "readback_flush", "protect"}) {
                 std::fprintf(g_writer.file, ",%s_count,%s_ms,%s_cp_ms", name, name, name);
             }
-            std::fprintf(g_writer.file, ",template_updates\n");
+            std::fprintf(g_writer.file,
+                         ",template_updates,descriptor_pushes,descriptor_writes,"
+                         "descriptor_elements,descriptor_gap_fills,empty_queue_skips\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
             if (const char* at = std::getenv("DCPC_TRACE_AT")) {
                 g_trace_at_s = std::atof(at);
@@ -298,6 +304,23 @@ void AddBackoff() {
 void AddTemplateUpdate() {
     if (Enabled())
         Bump(g_cp.template_updates, 1);
+}
+
+// driveclub-pc: single-writer counts of actual push payloads and the new CPU-path trials.
+void AddDescriptorPush(u32 writes, u32 elements) {
+    if (Enabled()) {
+        Bump(g_cp.descriptor_pushes, 1);
+        Bump(g_cp.descriptor_writes, writes);
+        Bump(g_cp.descriptor_elements, elements);
+    }
+}
+void AddDescriptorGapFill(u32 elements) {
+    if (Enabled())
+        Bump(g_cp.descriptor_gap_fills, elements);
+}
+void AddEmptyQueueSkips(u64 count) {
+    if (Enabled())
+        Bump(g_cp.empty_queue_skips, count);
 }
 
 namespace {
@@ -510,8 +533,14 @@ void OnGuestFrame() {
         std::fprintf(w.file, ",%llu,%.3f,%.3f", static_cast<unsigned long long>(Take(c.count)),
                      Ms(Take(c.ns)), Ms(Take(c.cp_ns)));
     }
-    std::fprintf(w.file, ",%llu\n",
-                 static_cast<unsigned long long>(Delta(g_cp.template_updates, w.template_updates)));
+    std::fprintf(
+        w.file, ",%llu,%llu,%llu,%llu,%llu,%llu\n",
+        static_cast<unsigned long long>(Delta(g_cp.template_updates, w.template_updates)),
+        static_cast<unsigned long long>(Delta(g_cp.descriptor_pushes, w.descriptor_pushes)),
+        static_cast<unsigned long long>(Delta(g_cp.descriptor_writes, w.descriptor_writes)),
+        static_cast<unsigned long long>(Delta(g_cp.descriptor_elements, w.descriptor_elements)),
+        static_cast<unsigned long long>(Delta(g_cp.descriptor_gap_fills, w.descriptor_gap_fills)),
+        static_cast<unsigned long long>(Delta(g_cp.empty_queue_skips, w.empty_queue_skips)));
     ++w.frame;
     g_frames.store(w.frame, std::memory_order_relaxed);
     if ((w.frame & 63) == 0) {

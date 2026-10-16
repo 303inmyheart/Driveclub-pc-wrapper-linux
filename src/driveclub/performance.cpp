@@ -16,17 +16,19 @@ int Env(const char* key, int fallback) {
 struct State {
     int mode = Env("DCPC_PERF", 0); // opt-in: corrected race A/B did not establish an FPS gain
     bool reverse = Env("DCPC_PERF_AB_REVERSE", 0) != 0;
-    std::array<bool, 3> features{Env("DCPC_PERF_TEMPLATES", 1) != 0,
-                                 Env("DCPC_PERF_SAMPLER_HINTS", 1) != 0,
-                                 Env("DCPC_PERF_READBACK_BATCH", 1) != 0};
+    std::array<bool, 5> features{
+        Env("DCPC_PERF_TEMPLATES", 1) != 0, Env("DCPC_PERF_SAMPLER_HINTS", 1) != 0,
+        Env("DCPC_PERF_READBACK_BATCH", 1) != 0, Env("DCPC_PERF_DESCRIPTOR_RANGES", 0) != 0,
+        Env("DCPC_PERF_SUBMIT_HANDOFF", 0) != 0};
     std::atomic<bool> active{mode == 1};
     u64 start = 0;
     int last_phase = -1;
     State() {
         LOG_INFO(
             Render,
-            "driveclub-pc: performance mode {}, templates={}, sampler hints={}, readback batch={}",
-            mode, features[0], features[1], features[2]);
+            "driveclub-pc: performance mode {}, templates={}, sampler hints={}, readback batch={}, "
+            "descriptor ranges={}, submit handoff={}",
+            mode, features[0], features[1], features[2], features[3], features[4]);
     }
 };
 State& GetState() {

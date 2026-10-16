@@ -389,7 +389,8 @@ size_t CompactDescriptorWrites(std::span<const vk::WriteDescriptorSet> in,
 // descriptors, so the runs always fit the write list.
 static_assert(64 <= Pipeline::NUM_DESCRIPTOR_WRITES);
 size_t CompactDescriptorWritesFlat(std::span<const vk::WriteDescriptorSet> in, const u8* first_desc,
-                                   u64 mask, Pipeline::DescriptorWrites& out) {
+                                   u64 mask, Pipeline::DescriptorWrites& out, bool merge_ranges,
+                                   u32& gap_fills) {
     out.clear();
     u32 w_idx = 0;
     for (const auto& w : in) {
@@ -405,8 +406,20 @@ size_t CompactDescriptorWritesFlat(std::span<const vk::WriteDescriptorSet> in, c
             while (bits != 0) {
                 const u32 first = static_cast<u32>(std::countr_zero(bits));
                 const u32 len = static_cast<u32>(std::countr_zero(~(bits >> first)));
-                out.push_back(MakeRun(w, first, len));
+                u32 end = first + len;
                 bits &= ~(((u64{1} << len) - 1) << first);
+                // driveclub-pc: fresh identical payloads may bridge short unchanged gaps on the
+                // same original write, reducing headers without changing descriptor state.
+                while (merge_ranges && bits) {
+                    const u32 next = static_cast<u32>(std::countr_zero(bits));
+                    if (next - end > 2)
+                        break;
+                    gap_fills += next - end;
+                    const u32 next_len = static_cast<u32>(std::countr_zero(~(bits >> next)));
+                    end = next + next_len;
+                    bits &= ~(((u64{1} << next_len) - 1) << next);
+                }
+                out.push_back(MakeRun(w, first, end - first));
             }
             break;
         }
@@ -426,6 +439,12 @@ SHAD_FORCE_INLINE void PushSet(vk::CommandBuffer cmdbuf, bool direct,
                                vk::ShaderStageFlags stage_flags, vk::PipelineLayout layout,
                                vk::PipelineBindPoint bind_point, u32 count,
                                const vk::WriteDescriptorSet* writes) {
+    if (DriveclubPC::Profiler::Enabled()) {
+        u32 elements = 0;
+        for (u32 i = 0; i < count; ++i)
+            elements += writes[i].descriptorCount;
+        DriveclubPC::Profiler::AddDescriptorPush(count, elements);
+    }
     if (direct) {
         const vk::PushDescriptorSetInfo info{
             .pNext = nullptr,
@@ -800,11 +819,16 @@ void Pipeline::BindResources(std::span<vk::WriteDescriptorSet> set_writes,
                 // Each extra write costs the driver's per-write prologue, so a
                 // compaction that saves fewer descriptors than it adds writes
                 // is sent whole.
+                u32 gap_fills = 0;
                 const size_t runs =
-                    flat ? CompactDescriptorWritesFlat(set_writes, bind_plan.first_desc.data(),
-                                                       slot.mask, partial_scratch)
+                    flat ? CompactDescriptorWritesFlat(
+                               set_writes, bind_plan.first_desc.data(), slot.mask, partial_scratch,
+                               DriveclubPC::Performance::Enabled(
+                                   DriveclubPC::Performance::Feature::DescriptorRanges),
+                               gap_fills)
                          : CompactDescriptorWrites(set_writes, slot, partial_scratch);
                 if (runs <= set_writes.size() + (slot.desc_count - slot.desc_changed) / 2) {
+                    DriveclubPC::Profiler::AddDescriptorGapFill(gap_fills);
                     slot.runs += runs;
                     push_writes = partial_scratch.data();
                     push_count = static_cast<u32>(partial_scratch.size());
