@@ -57,8 +57,10 @@ namespace Common {
 // driveclub-pc: CPU sets describe hybrid topology without assuming logical CPU numbering.
 void PinPerformanceThread(const char* name) {
 #ifdef _WIN32
-    if (std::string_view{name} != "Game:Main" &&
-        std::string_view{name} != "shadPS4:GpuCommandProcessor") {
+    const std::string_view thread{name};
+    // Helpers that feed the command processor: P-cores, but off its reserved core.
+    const bool helper = thread == "dcpc:QueueSubmit" || thread == "dcpc:VkRecorder";
+    if (thread != "Game:Main" && thread != "shadPS4:GpuCommandProcessor" && !helper) {
         return;
     }
     const char* env = std::getenv("DCPC_PCORE_PIN");
@@ -116,8 +118,10 @@ void PinPerformanceThread(const char* name) {
     }
     u64 mask = topology.mask & process_mask;
     const u64 reserved = GetReservedCoreMask();
-    if (std::string_view{name} == "Game:Main") {
+    if (thread == "Game:Main") {
         mask &= ~GetExclusionStripMask();
+    } else if (helper) {
+        mask &= ~(reserved | GetExclusionStripMask());
     } else if (reserved & mask) {
         mask &= reserved;
     }

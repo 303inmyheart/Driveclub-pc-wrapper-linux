@@ -67,6 +67,8 @@ struct AsyncSubmitter {
 
     void Loop(std::stop_token stop) {
         Common::SetCurrentThreadName("dcpc:QueueSubmit");
+        // Short bursts the command processor's next batch may wait behind.
+        Common::SetCurrentThreadPriority(Common::ThreadPriority::High);
         while (true) {
             Job job;
             {
