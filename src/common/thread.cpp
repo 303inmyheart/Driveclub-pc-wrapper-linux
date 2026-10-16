@@ -67,6 +67,30 @@ void PinPerformanceThread(const char* name) {
     if (env && env[0] == '0') {
         return;
     }
+    const u64 performance_mask = GetPerformanceCoreMask();
+    DWORD_PTR process_mask = 0, system_mask = 0;
+    if (!performance_mask ||
+        !GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask)) {
+        return;
+    }
+    u64 mask = performance_mask & process_mask;
+    const u64 reserved = GetReservedCoreMask();
+    if (thread == "Game:Main") {
+        mask &= ~GetExclusionStripMask();
+    } else if (helper) {
+        mask &= ~(reserved | GetExclusionStripMask());
+    } else if (reserved & mask) {
+        mask &= reserved;
+    }
+    if (mask) {
+        const bool ok = SetCurrentThreadAffinityMask(mask);
+        LOG_INFO(Common, "driveclub-pc: P-core pin '{}' mask={:#x}, success={}", name, mask, ok);
+    }
+#endif
+}
+
+u64 GetPerformanceCoreMask() {
+#ifdef _WIN32
     struct Topology {
         u64 mask = 0;
     };
@@ -111,24 +135,29 @@ void PinPerformanceThread(const char* name) {
                  result.mask, lowest, highest);
         return result;
     }();
-    DWORD_PTR process_mask = 0, system_mask = 0;
-    if (!topology.mask ||
-        !GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask)) {
-        return;
-    }
-    u64 mask = topology.mask & process_mask;
+    return topology.mask;
+#else
+    return 0;
+#endif
+}
+
+void SetCommandProcessorScheduling(bool wide) {
+#ifdef _WIN32
     const u64 reserved = GetReservedCoreMask();
-    if (thread == "Game:Main") {
-        mask &= ~GetExclusionStripMask();
-    } else if (helper) {
-        mask &= ~(reserved | GetExclusionStripMask());
-    } else if (reserved & mask) {
-        mask &= reserved;
+    const u64 performance = GetPerformanceCoreMask();
+    u64 mask = reserved ? reserved : performance;
+    if (wide && performance) {
+        mask = performance | reserved;
     }
     if (mask) {
-        const bool ok = SetCurrentThreadAffinityMask(mask);
-        LOG_INFO(Common, "driveclub-pc: P-core pin '{}' mask={:#x}, success={}", name, mask, ok);
+        SetCurrentThreadAffinityMask(mask);
     }
+    if (reserved) {
+        SetThreadIdealProcessor(GetCurrentThread(),
+                                static_cast<DWORD>(std::countr_zero(reserved)));
+    }
+    SetThreadPriority(GetCurrentThread(),
+                      wide ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_NORMAL);
 #endif
 }
 
