@@ -17,6 +17,10 @@
 #include "input/controller.h"
 #include "video_core/renderdoc.h"
 
+#ifdef DCPC_PGO_GENERATE
+extern "C" int __llvm_profile_write_file(void);
+#endif
+
 namespace DriveclubPC::Autopilot {
 
 namespace {
@@ -86,6 +90,16 @@ bool Run(const std::string& action, std::vector<Step>& repeats, double now_s) {
     const std::string& verb = parts[0];
     if (verb == "shot" && parts.size() == 1) {
         VideoCore::RequestScreenshot(VideoCore::ScreenshotRequest::GameOnly);
+        return true;
+    }
+    if (verb == "pgodump" && parts.size() == 1) {
+        // Profile-guided optimisation: the instrumented build writes LLVM_PROFILE_FILE here,
+        // since unattended runs end by terminating the process.
+#ifdef DCPC_PGO_GENERATE
+        LOG_INFO(Debug, "Autopilot: profile written ({})", __llvm_profile_write_file());
+#else
+        LOG_WARNING(Debug, "Autopilot: pgodump needs a -Pgo generate build");
+#endif
         return true;
     }
     if ((verb == "press" || verb == "hold" || verb == "release") && parts.size() >= 2) {

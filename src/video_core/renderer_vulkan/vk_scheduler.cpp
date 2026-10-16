@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
+#include <deque>
+#include <vector>
+
 #include "common/assert.h"
 #include "common/debug.h"
+#include "common/logging/log.h"
 #include "common/rdtsc.h"
 #include "common/thread.h"
 #include "core/emulator_settings.h"
@@ -18,6 +23,119 @@ namespace Vulkan {
 
 std::mutex Scheduler::submit_mutex;
 
+namespace {
+
+// driveclub-pc: queue submits of the GPU command processor's scheduler cost ~28 us each on
+// that thread (~34 per frame at the race start, docs/benchmarks.md). They are handed, in order,
+// to this thread instead; the batch contents and sizes stay the same.
+struct AsyncSubmitter {
+    struct Job {
+        vk::Queue queue;
+        std::vector<vk::CommandBuffer> cmd_buffers;
+        SubmitInfo info;
+    };
+
+    std::mutex mutex;
+    std::condition_variable_any cv;
+    std::condition_variable done_cv;
+    std::deque<Job> jobs;
+    u64 queued = 0;
+    u64 completed = 0;
+    std::jthread thread;
+
+    void Start() {
+        if (thread.joinable()) {
+            return;
+        }
+        thread = std::jthread([this](std::stop_token stop) { Loop(stop); });
+    }
+
+    void Push(Job job) {
+        {
+            std::scoped_lock lk{mutex};
+            jobs.push_back(std::move(job));
+            ++queued;
+        }
+        cv.notify_one();
+    }
+
+    void Drain() {
+        std::unique_lock lk{mutex};
+        const u64 target = queued;
+        done_cv.wait(lk, [&] { return completed >= target; });
+    }
+
+    void Loop(std::stop_token stop) {
+        Common::SetCurrentThreadName("dcpc:QueueSubmit");
+        while (true) {
+            Job job;
+            {
+                std::unique_lock lk{mutex};
+                cv.wait(lk, stop, [&] { return !jobs.empty(); });
+                if (jobs.empty()) {
+                    return;
+                }
+                job = std::move(jobs.front());
+                jobs.pop_front();
+            }
+            Submit(job);
+            {
+                std::scoped_lock lk{mutex};
+                ++completed;
+            }
+            done_cv.notify_all();
+        }
+    }
+
+    static void Submit(Job& job) {
+        auto& info = job.info;
+        std::array<vk::PipelineStageFlags, std::tuple_size_v<decltype(info.wait_semas)>>
+            wait_stage_masks;
+        wait_stage_masks.fill(vk::PipelineStageFlagBits::eAllCommands);
+        const vk::TimelineSemaphoreSubmitInfo timeline_si = {
+            .waitSemaphoreValueCount = info.num_wait_semas,
+            .pWaitSemaphoreValues = info.wait_ticks.data(),
+            .signalSemaphoreValueCount = info.num_signal_semas,
+            .pSignalSemaphoreValues = info.signal_ticks.data(),
+        };
+        const vk::SubmitInfo submit_info = {
+            .pNext = &timeline_si,
+            .waitSemaphoreCount = info.num_wait_semas,
+            .pWaitSemaphores = info.wait_semas.data(),
+            .pWaitDstStageMask = wait_stage_masks.data(),
+            .commandBufferCount = static_cast<u32>(job.cmd_buffers.size()),
+            .pCommandBuffers = job.cmd_buffers.data(),
+            .signalSemaphoreCount = info.num_signal_semas,
+            .pSignalSemaphores = info.signal_semas.data(),
+        };
+        std::scoped_lock lk{Scheduler::submit_mutex};
+        ImGui::Core::TextureManager::Submit();
+        const auto result = job.queue.submit(submit_info, info.fence);
+        ASSERT_MSG(result != vk::Result::eErrorDeviceLost, "Device lost during submit");
+    }
+};
+
+AsyncSubmitter g_async_submitter;
+std::atomic<bool> g_async_submit_used{false};
+
+} // namespace
+
+void Scheduler::EnableAsyncSubmit() {
+    const char* env = std::getenv("DCPC_ASYNC_SUBMIT");
+    async_submit = !(env && env[0] == '0');
+    if (async_submit) {
+        g_async_submitter.Start();
+        g_async_submit_used.store(true, std::memory_order_release);
+        LOG_INFO(Render_Vulkan, "driveclub-pc: queue submits on a separate thread");
+    }
+}
+
+void Scheduler::DrainAsyncSubmits() {
+    if (g_async_submit_used.load(std::memory_order_acquire)) {
+        g_async_submitter.Drain();
+    }
+}
+
 Scheduler::Scheduler(const Instance& instance)
     : instance{instance}, work_semaphore{instance}, command_pool{instance, &work_semaphore} {
 #if TRACY_GPU_ENABLED
@@ -30,6 +148,9 @@ Scheduler::Scheduler(const Instance& instance)
 }
 
 Scheduler::~Scheduler() {
+    if (async_submit) {
+        DrainAsyncSubmits();
+    }
 #if TRACY_GPU_ENABLED
     std::free(profiler_scope);
 #endif
@@ -246,6 +367,11 @@ void Scheduler::EndSession() {
 void Scheduler::SubmitExecution(SubmitInfo& info) {
     // driveclub-pc: actual scheduler submits, including readback-induced ones.
     DriveclubPC::Profiler::CostScope cost{DriveclubPC::Profiler::Cost::Submit};
+    if (!async_submit) {
+        // A batch of this scheduler may wait on a tick of a batch still queued for the submit
+        // thread; on the same queue it must not overtake it.
+        DrainAsyncSubmits();
+    }
     std::scoped_lock lk{submit_mutex};
     // Every submit of this scheduler runs on the GPU command thread, which is
     // where the hook's state lives.
@@ -288,6 +414,14 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
 
     const vk::Semaphore timeline = work_semaphore.Handle();
     info.AddSignal(timeline, signal_value);
+
+    if (async_submit) {
+        g_async_submitter.Push({instance.GetGraphicsQueue(), std::move(cmd_buffers), info});
+        work_semaphore.Refresh();
+        BeginSession();
+        PopPendingOperations();
+        return;
+    }
 
     std::array<vk::PipelineStageFlags, std::tuple_size_v<decltype(info.wait_semas)>>
         wait_stage_masks;

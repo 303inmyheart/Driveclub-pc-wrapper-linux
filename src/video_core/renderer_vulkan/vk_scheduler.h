@@ -578,6 +578,15 @@ public:
     /// thread when it is enabled (DCPC_DEFERRED_RECORDING=1, driveclub/deferred_recording.h).
     void EnableDeferredRecording();
 
+    /// driveclub-pc: this scheduler's queue submits run on a separate submit thread
+    /// (on by default, DCPC_ASYNC_SUBMIT=0 disables), in order. Submits of other schedulers wait
+    /// for that thread first, so a batch that waits on one of this scheduler's ticks never
+    /// overtakes it on the queue.
+    void EnableAsyncSubmit();
+
+    /// Waits until the submit thread has handed every queued batch to the driver.
+    static void DrainAsyncSubmits();
+
 private:
     void EndSession();
     void PublishDeferredTargets() const;
@@ -619,6 +628,7 @@ private:
     RenderState render_state;
     bool is_rendering = false;
     bool deferred_recording = false;
+    bool async_submit = false;
     std::array<WaitStat, static_cast<size_t>(WaitSite::Count)> wait_stats_{};
     u64 rs_calls_{};
     u64 rs_restarts_{};
