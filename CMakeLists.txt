@@ -1350,6 +1350,8 @@ add_executable(shadps4
     src/driveclub/async_pipelines.cpp
     src/driveclub/async_pipelines.h
     src/driveclub/autopilot.cpp
+    src/driveclub/fps_unlock.cpp
+    src/driveclub/fps_unlock.h
     src/driveclub/render_res.cpp
     src/driveclub/render_res.h
     src/driveclub/autopilot.h
