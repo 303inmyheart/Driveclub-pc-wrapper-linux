@@ -31,8 +31,8 @@ Only **Driveclub CUSA00093 with update 1.28** has been tested. Other regions or 
 | Game folder | the base game folder (`CUSA00093`) |
 | Firmware | your `sys_modules` folder. **Import...** copies it into `user\sys_modules`, so the original can move later |
 | Frame rate | 30 / **60 (recommended)** / 120 (experimental, depends on scene and CPU temperature) |
-| Display / Window size | borderless fullscreen or window; the window size only applies in windowed mode (fullscreen always covers the display) |
-| Render resolution | **1920x1080 (native)** / 2560x1440 / 3840x2160. The game renders its scene at this size (the engine's own scaling; extra video memory is set up automatically). The picture stays 16:9, with black bars on other aspect ratios. 1440p costs about 10–15 % FPS; 4K is very demanding |
+| Display / Window size | borderless fullscreen or window; the window size only applies in windowed mode (fullscreen always covers the display). Includes the ultrawide sizes 2560x1080, 3440x1440 and 5120x1440 |
+| Render resolution | **1080p (native)** / 1440p / 2160p: the number of lines the game renders (the engine's own scaling; extra video memory is set up automatically). The width follows the aspect ratio of the display (fullscreen) or window, see *Ultrawide* below. 1440p costs about 10–15 % FPS; 2160p is very demanding |
 | Upscaling / Sharpening | AMD FSR 1 or bilinear; RCAS sharpening off / normal / strong |
 | Anisotropic filter | 16x by default; Off keeps the game's own setting |
 | Anti-aliasing | Off / **FXAA (default)** / SMAA 1x High |
@@ -47,8 +47,15 @@ Only **Driveclub CUSA00093 with update 1.28** has been tested. Other regions or 
 
 The game's own clock runs in real time: race times are correct at 120 FPS as well, and physics don't speed up.
 
-**Known issue:** with an unmodified 1.28 executable the game can run too fast at the 60 FPS target.
-A fix is planned for the next release. Ultrawide (21:9) output is not supported yet.
+**Ultrawide:** on a display or window wider than 16:9 the game renders a native wide image: the
+scene itself is rendered at the wide size (e.g. 3440x1440 at 1440p, nothing is stretched) with a
+wider horizontal field of view (Hor+). The HUD stays in the centred 16:9 area and videos are
+pillarboxed. 2160p on an ultrawide display is reduced to 1440p (the game's memory budget).
+Displays narrower than 16:9 (e.g. 16:10) keep a 16:9 picture with black bars.
+Tested in scripted races and screenshots, not yet on a real ultrawide monitor.
+
+**60 FPS with an unmodified 1.28 executable:** the game no longer runs too fast; the fix is applied
+in memory and leaves already-modified executables alone.
 
 **Data:** settings, saves, shader cache and logs are all kept in the `user` folder next to the
 executable. Keep that folder when you update to a new release. The log of the last run is
@@ -73,6 +80,7 @@ Laptop GPU, 32 GB RAM, Windows 11. Same race, same game settings.
 | 60 FPS target, frame pacing | 12–19 % of frames drop to 33 ms (30 FPS) | stable 60 |
 | 120 FPS target (played by hand) | dips to ~35 FPS | 75–90 FPS |
 | 120 FPS target, 2560x1440 render (v0.2, played by hand) | – | 65–80 FPS |
+| 120 FPS target, ultrawide (v0.2.1, scripted races) | – | 2560x1080: 84, 3440x1440: 70, 5120x1440: 67 FPS |
 
 The 60 FPS rows come from scripted test races; the 120 FPS row comes from races played by hand.
 Results vary by up to ~15 % with laptop temperature. At 120 FPS the limit is the emulator's
@@ -100,6 +108,8 @@ Release builds also use profile-guided optimisation, which adds about 10 %.
   Almost all of the code here is theirs.
 - [GR2fork](https://github.com/junminlee2004/GR2fork) by junminlee2004: the fork this project starts
   from (see [README-GR2fork.md](README-GR2fork.md)).
+- [Driveclub_Widescreen](https://github.com/rafidwayne/Driveclub_Widescreen) by rafidwayne
+  (GPL-2.0-or-later): the aspect ratio, video-out width and FOV values the ultrawide support starts from.
 - [SMAA](https://github.com/iryoku/smaa) by Jorge Jimenez et al., MIT licence
   ([driveclub-pc/SMAA-LICENSE.txt](driveclub-pc/SMAA-LICENSE.txt)).
 - AMD FidelityFX FSR 1, already part of shadPS4.

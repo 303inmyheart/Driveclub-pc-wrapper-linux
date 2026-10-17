@@ -1,5 +1,17 @@
 # Changes compared with GR2fork
 
+## v0.2.1
+
+- **Ultrawide** support for displays and windows wider than 16:9 (window sizes 2560x1080,
+  3440x1440, 5120x1440 added; fullscreen uses the display's aspect ratio). Based on rafidwayne's
+  Driveclub_Widescreen (camera aspect, video-out width, Hor+ FOV factor), extended so the engine
+  renders its scene at the wide size: the scene-size table gets wider widths and the
+  `-resolutionscale` height (width * 9 / 16) becomes table height * scale. The HUD stays in the
+  centred 16:9 area. "Render resolution" now selects the number of lines (1080p / 1440p / 2160p).
+- **60 FPS for the unmodified 1.28 executable:** three code changes of the community-modified
+  executable are applied in memory when the original bytes match; the game no longer runs too fast.
+- Release build: PGO again, from a new recorded race.
+
 ## v0.2
 
 - **Render resolution** setting (1920x1080 / 2560x1440 / 3840x2160). Driveclub's engine has its
