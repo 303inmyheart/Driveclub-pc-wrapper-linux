@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <set>
+#include <tuple>
+#include <mutex>
+#include <cstdlib>
 #include <algorithm>
 #include <chrono>
 #include <bit>
@@ -1703,6 +1707,27 @@ void TextureCache::RegisterImage(ImageId image_id) {
     image_lru_cache.Insert(image, gc_tick);
     const auto& info = image.info;
     ASSERT_MSG((info.guest_address & 0xff) == 0, "Trying to register an unaligned image");
+    {
+        // driveclub-pc: DCPC_IMAGE_LOG=1 lists each distinct image shape once (frame map for
+        // the render-resolution work).
+        static const bool log_images = [] {
+            const char* env = std::getenv("DCPC_IMAGE_LOG");
+            return env && env[0] == '1';
+        }();
+        if (log_images && info.size.width >= 256 && info.size.height >= 128) {
+            static std::mutex m;
+            static std::set<std::tuple<u32, u32, u32, u32>> seen;
+            std::scoped_lock lk{m};
+            if (seen.emplace(info.size.width, info.size.height, static_cast<u32>(info.pixel_format),
+                             info.props.is_depth)
+                    .second) {
+                LOG_INFO(Render, "driveclub-pc: image {}x{} {} depth={} tiled={} addr={:#x}",
+                         info.size.width, info.size.height, vk::to_string(info.pixel_format),
+                         static_cast<u32>(info.props.is_depth),
+                         static_cast<u32>(info.props.is_tiled), info.guest_address);
+            }
+        }
+    }
     // The record must exist before the id is reachable through the page table,
     // which unlocked readers walk.
     AddrFilterOf(image_id.index) = AddrFilter{
