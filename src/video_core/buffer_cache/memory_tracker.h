@@ -94,6 +94,48 @@ public:
         });
     }
 
+    /// driveclub-pc: unprotects the write-watched pages of [cpu_addr, cpu_addr + size) that hold no
+    /// GPU data and are not CPU modified yet, as if the CPU had written them, so later writes to
+    /// them do not fault. page_ok(addr) can veto a page. Returns the number of pages unprotected.
+    u64 PrefaultWriteWindow(VAddr cpu_addr, u64 size, auto&& page_ok) noexcept {
+        if (readbacks_mode == GpuReadbacksMode::Disabled) {
+            return 0;
+        }
+        u64 total = 0;
+        VAddr cursor = cpu_addr;
+        IteratePages(cpu_addr, size, [&](RegionManager* manager, u64 offset, u64 size) {
+            const auto bounds = manager->GetBounds(offset, size);
+            manager->Lock(bounds);
+            u64 run_start = 0;
+            u64 run_size = 0;
+            const auto flush = [&] {
+                if (run_size != 0) {
+                    manager->template ChangeRegionState<StateOp::Set, StateOp::None, false>(
+                        run_start, run_size);
+                    total += run_size / BYTES_PER_PAGE;
+                    run_size = 0;
+                }
+            };
+            for (u64 o = offset; o < offset + size; o += BYTES_PER_PAGE) {
+                const bool ok = !manager->template IsRegionModified<Type::GPU>(o, BYTES_PER_PAGE) &&
+                                !manager->template IsRegionModified<Type::CPU>(o, BYTES_PER_PAGE) &&
+                                page_ok(cursor + (o - offset));
+                if (ok) {
+                    if (run_size == 0) {
+                        run_start = o;
+                    }
+                    run_size += BYTES_PER_PAGE;
+                } else {
+                    flush();
+                }
+            }
+            flush();
+            manager->Unlock(bounds);
+            cursor += size;
+        });
+        return total;
+    }
+
     /// Removes all protection from a page and ensures GPU data has been flushed if requested
     void InvalidateRegion(VAddr cpu_addr, u64 size, auto&& on_flush) noexcept {
         if (readbacks_mode == GpuReadbacksMode::Disabled) {

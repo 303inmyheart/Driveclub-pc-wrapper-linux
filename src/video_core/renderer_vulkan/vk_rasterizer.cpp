@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <bit>
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 
@@ -9,13 +12,15 @@
 
 #include "common/rdtsc.h"
 
+#include "common/alignment.h"
 #include "common/debug.h"
-#include "driveclub/async_pipelines.h"
-#include "driveclub/diag_tables.h"
-#include "driveclub/performance.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
+#include "driveclub/async_pipelines.h"
+#include "driveclub/diag_tables.h"
+#include "driveclub/frame_profiler.h"
+#include "driveclub/performance.h"
 #include "shader_recompiler/resource.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -3046,6 +3051,43 @@ bool Rasterizer::InvalidateMemory(VAddr addr, u64 size, bool assume_locks) {
     texture_cache.InvalidateMemory(addr, size);
     Skipcache::Framework::Instance().BumpMemGen();
     return true;
+}
+
+u64 Rasterizer::PrefaultWriteWindow(VAddr addr) {
+    static const u64 window = [] {
+        const char* env = std::getenv("DCPC_WRITE_WINDOW");
+        const u64 kb = env ? std::strtoull(env, nullptr, 10) : 0;
+        // A power of two of at least two pages; 0 disables.
+        return kb >= 8 && std::has_single_bit(kb) ? kb * 1024 : 0;
+    }();
+    static const bool ab = [] {
+        const char* env = std::getenv("DCPC_WRITE_WINDOW_AB");
+        return env && env[0] == '1';
+    }();
+    if (window == 0) {
+        return 0;
+    }
+    if (ab) {
+        // In-run A/B: on in odd 10 s periods (profiler phase 1).
+        const u64 period = static_cast<u64>(std::chrono::duration_cast<std::chrono::seconds>(
+                                                std::chrono::steady_clock::now().time_since_epoch())
+                                                .count() /
+                                            10);
+        const bool on = (period & 1) != 0;
+        DriveclubPC::Profiler::SetPhase(on ? 1 : 0);
+        if (!on) {
+            return 0;
+        }
+    }
+    const VAddr start = Common::AlignDown(addr, window);
+    if (!IsMapped(start, window) || texture_cache.MayCoverImage(start, window)) {
+        return 0;
+    }
+    const u64 pages = buffer_cache.PrefaultWriteWindow(start, window);
+    if (pages != 0) {
+        Skipcache::Framework::Instance().BumpMemGen();
+    }
+    return pages;
 }
 
 bool Rasterizer::TryCpWriteBacking(VAddr, const void*, u64) {

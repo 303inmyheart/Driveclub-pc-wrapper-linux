@@ -6,8 +6,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstdlib>
 #include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <type_traits>
@@ -781,7 +781,7 @@ private:
     Common::LRUCache<Image> image_lru_cache;
     // Lazy-touch GC-walk accounting; only written with lru_lazy_touch latched on.
     u64 lru_lazy_gc_runs_{};
-    u64 lru_lazy_hard_{};     // passes configured pressured or aggressive
+    u64 lru_lazy_hard_{}; // passes configured pressured or aggressive
     // driveclub-pc: images the collector cannot free move to the back of the queue
     // (GarbageCollectImages); DCPC_GC_SKIP_FIX=0 restores the old behaviour.
     bool gc_skip_fix_ = [] {
@@ -864,6 +864,14 @@ private:
     // bit proves the page table walk would visit nothing. Always maintained,
     // so the probe can be audited with the filter off.
     static constexpr u32 CoverGranuleBits = 16;
+
+public:
+    /// driveclub-pc: whether any image may cover the range (conservative, 64 KiB granules).
+    bool MayCoverImage(VAddr addr, size_t size) const noexcept {
+        return CoverAny(addr, size);
+    }
+
+private:
     static constexpr size_t CoverWords = size_t{1} << (40 - CoverGranuleBits - 6);
     static constexpr u64 CoverLastGranule = (u64{CoverWords} << 6) - 1;
     bool CoverAny(VAddr addr, size_t size) const noexcept {

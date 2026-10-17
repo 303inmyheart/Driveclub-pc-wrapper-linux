@@ -22,7 +22,6 @@
 #include "core/emulator_settings.h"
 #include "core/memory.h"
 #include "core/signals.h"
-#include "driveclub/frame_profiler.h"
 #include "driveclub/diag_tables.h"
 #include "driveclub/frame_profiler.h"
 #include "driveclub/guest_stats.h"
@@ -608,7 +607,8 @@ bool ReadbackFeaturesActive() {
         const bool on = env && std::strtoul(env, nullptr, 10) != 0;
         if (on) {
             DriveclubPC::Profiler::SetPhaseBit(0, true);
-            LOG_INFO(Render, "GPU readback features alternate every 10 s (profiler phase bit 0 = on)");
+            LOG_INFO(Render,
+                     "GPU readback features alternate every 10 s (profiler phase bit 0 = on)");
         }
         return on;
     }();
@@ -667,6 +667,8 @@ struct SignalImpl : public PageManager::Impl {
 
     // driveclub-pc: fault statistics, logged every 10 s (write/read faults, on guest threads
     // vs the GPU command thread), to judge whether a larger unprotect window would pay.
+    inline static std::atomic<u64> window_stats[2]{};
+
     static void CountFault(bool write, bool gpu_thread) {
         static std::atomic<u64> counts[4]{};
         static std::atomic<s64> last_report_ns{0};
@@ -679,13 +681,15 @@ struct SignalImpl : public PageManager::Impl {
             last_report_ns.compare_exchange_strong(last, now);
             return;
         }
-        if (now - last >= 10'000'000'000 &&
-            last_report_ns.compare_exchange_strong(last, now)) {
+        if (now - last >= 10'000'000'000 && last_report_ns.compare_exchange_strong(last, now)) {
             const double secs = static_cast<double>(now - last) / 1e9;
-            LOG_INFO(Render, "Guest faults per second: write {:.0f} (GPU thread {:.0f}), read {:.0f} "
-                             "(GPU thread {:.0f})",
+            LOG_INFO(Render,
+                     "Guest faults per second: write {:.0f} (GPU thread {:.0f}), read {:.0f} "
+                     "(GPU thread {:.0f})",
                      counts[0].exchange(0) / secs, counts[1].exchange(0) / secs,
                      counts[2].exchange(0) / secs, counts[3].exchange(0) / secs);
+            LOG_INFO(Render, "Write-fault windows per second {:.0f}, pages unprotected {:.0f}",
+                     window_stats[0].exchange(0) / secs, window_stats[1].exchange(0) / secs);
 #ifdef _WIN32
             LOG_INFO(Render,
                      "Read faults served from the backing view {:.0f}/s, needing GPU bytes "
@@ -722,24 +726,33 @@ struct SignalImpl : public PageManager::Impl {
         }
 #endif
         if (Common::IsWriteError(context)) {
+            bool handled;
             if (DriveclubPC::DiagTables::Active()) {
                 const u64 start = DriveclubPC::Profiler::NowNs();
-                const bool handled = rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
+                handled = rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
                 DriveclubPC::DiagTables::NoteFault(true, false,
                                                    reinterpret_cast<u64>(Common::GetRip(context)),
                                                    addr, DriveclubPC::Profiler::NowNs() - start);
-                return handled;
+            } else {
+                handled = rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
             }
-            return rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
+            if (handled) {
+                // driveclub-pc: unprotect the neighbouring pages too (DCPC_WRITE_WINDOW).
+                if (const u64 pages = rasterizer->PrefaultWriteWindow(addr); pages != 0) {
+                    window_stats[0].fetch_add(1, std::memory_order_relaxed);
+                    window_stats[1].fetch_add(pages, std::memory_order_relaxed);
+                }
+            }
+            return handled;
         } else {
             if (DriveclubPC::DiagTables::Active()) {
                 // driveclub-pc: which guest instruction reads GPU-written memory back.
                 const bool cpu_data = rasterizer->IsReadOfCpuDataOnGpuPage(addr, size);
                 const u64 start = DriveclubPC::Profiler::NowNs();
                 const bool handled = rasterizer->ReadMemory(addr, size, is_gpu_thread);
-                DriveclubPC::DiagTables::NoteFault(
-                    false, cpu_data, reinterpret_cast<u64>(Common::GetRip(context)), addr,
-                    DriveclubPC::Profiler::NowNs() - start);
+                DriveclubPC::DiagTables::NoteFault(false, cpu_data,
+                                                   reinterpret_cast<u64>(Common::GetRip(context)),
+                                                   addr, DriveclubPC::Profiler::NowNs() - start);
                 return handled;
             }
             return rasterizer->ReadMemory(addr, size, is_gpu_thread);

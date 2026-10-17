@@ -225,6 +225,10 @@ void BufferCache::TickFrame() {
     }
 }
 
+u64 BufferCache::PrefaultWriteWindow(VAddr addr, u64 size) {
+    return memory_tracker->PrefaultWriteWindow(addr, size, [](VAddr) { return true; });
+}
+
 void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks) {
     memory_tracker->InvalidateRegion(device_addr, size, [this, device_addr, size, assume_locks] {
         ReadMemory(device_addr, size, true, assume_locks);
