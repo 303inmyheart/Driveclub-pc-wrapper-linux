@@ -17,6 +17,7 @@
 #include "core/emulator_settings.h"
 #include "driveclub/launch_check.h"
 #include "driveclub/launcher.h"
+#include "driveclub/widescreen.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -148,9 +149,21 @@ std::pair<int, int> DisplaySize() {
     return {width, height};
 }
 
-/// driveclub-pc: extra video memory the game needs for its render targets at this height.
-int ExtraVramMb(int render_res) {
-    return render_res == 2160 ? 1536 : render_res == 1440 ? 1024 : 0;
+/// driveclub-pc: the game's output size: the render resolution lines at the display's aspect
+/// in fullscreen or the window's aspect in windowed mode (wider than 16:9: widescreen.h).
+Widescreen::Output TargetOutput(const Settings& s) {
+    auto [w, h] = DisplaySize();
+    if (!s.fullscreen && s.width > 0 && s.height > 0) {
+        w = s.width;
+        h = s.height;
+    }
+    return Widescreen::ComputeOutput(w, h, static_cast<u32>(s.render_res));
+}
+
+/// driveclub-pc: extra video memory the game needs for its render targets at this size.
+int ExtraVramMb(const Widescreen::Output& out) {
+    const u64 pixels = u64{out.width} * out.height;
+    return pixels <= 1920u * 1080u ? 0 : pixels <= 2560u * 1440u ? 1024 : 1536;
 }
 
 /// Writes the graphics settings into the per-game emulator config, keeping its other keys.
@@ -180,7 +193,7 @@ void WriteGameConfig(const Settings& s) {
     gpu["readbacks_mode"] = s.readbacks;
     // driveclub-pc: a higher render resolution needs a bigger video-memory budget in the game
     // (DCPC_VRAM_EXTRA_MB below), backed by extra direct memory.
-    json["General"]["extra_dmem_in_mbytes"] = ExtraVramMb(s.render_res);
+    json["General"]["extra_dmem_in_mbytes"] = ExtraVramMb(TargetOutput(s));
     std::ofstream out(path);
     out << json.dump(2) << "\n";
 }
@@ -202,13 +215,21 @@ void ApplyRuntime(const Settings& s) {
     SetEnvDefault("DCPC_PCORE_PIN", s.pcore_pin ? "1" : "0");
     SetEnvDefault("DCPC_ASYNC_SHADERS", s.async_shaders ? "1" : "0");
     SetEnvDefault("DCPC_ASYNC_PIPELINES", s.async_shaders ? "1" : "0");
-    if (s.render_res != 1080) {
+    const auto out = TargetOutput(s);
+    if (out.height != 1080) {
         // The engine's own -resolutionscale switch scales its render targets (width aligned to
-        // 128, height = width * 9 / 16); the game's display buffers follow DCPC_RENDER_RES.
-        const bool uhd = s.render_res == 2160;
-        SetEnvDefault("DCPC_GAME_ARGS", uhd ? "-resolutionscale 2" : "-resolutionscale 1.3333");
-        SetEnvDefault("DCPC_VRAM_EXTRA_MB", std::to_string(ExtraVramMb(s.render_res)));
-        SetEnvDefault("DCPC_RENDER_RES", uhd ? "3840x2160" : "2560x1440");
+        // 128, height = width * 9 / 16, or table height * scale with widescreen).
+        SetEnvDefault("DCPC_GAME_ARGS",
+                      out.height == 2160 ? "-resolutionscale 2" : "-resolutionscale 1.3333");
+    }
+    if (out.wide || out.height != 1080) {
+        // The game's display buffers follow DCPC_RENDER_RES.
+        SetEnvDefault("DCPC_VRAM_EXTRA_MB", std::to_string(ExtraVramMb(out)));
+        SetEnvDefault("DCPC_RENDER_RES", fmt::format("{}x{}", out.width, out.height));
+    }
+    if (out.wide) {
+        // Aspect, Hor+ FOV and a wide scene (widescreen.h).
+        SetEnvDefault("DCPC_WIDESCREEN", fmt::format("{}x{}", out.width, out.height));
     }
     SetEnvDefault("DCPC_TARGET_FPS", std::to_string(s.target_fps));
     SetEnvDefault("DCPC_DEFERRED_RECORDING", s.deferred_recording ? "1" : "0");
@@ -473,8 +494,10 @@ void BuildControls() {
     y += Row;
 
     const auto [dw, dh] = DisplaySize();
-    ui.resolutions = {{0, 0},       {3840, 2160}, {2560, 1600}, {2560, 1440},
-                      {1920, 1200}, {1920, 1080}, {1600, 900},  {1280, 720}};
+    // driveclub-pc: the three ultrawide sizes get a matching wide output (widescreen.h).
+    ui.resolutions = {{0, 0},       {5120, 1440}, {3840, 2160}, {3440, 1440},
+                      {2560, 1600}, {2560, 1440}, {2560, 1080}, {1920, 1200},
+                      {1920, 1080}, {1600, 900},  {1280, 720}};
     std::vector<std::wstring> res_items;
     int res_sel = 0;
     for (size_t i = 0; i < ui.resolutions.size(); ++i) {
@@ -492,10 +515,11 @@ void BuildControls() {
     UpdateWindowSizeEnabled();
     y += Row;
 
+    // driveclub-pc: lines; the width follows the display (or window) aspect, see widescreen.h.
     Label(L"Render resolution", L, y, 140);
     Combo(IdRenderRes, C, y, W,
-          {L"1920x1080 (native, fastest)", L"2560x1440 (sharper, about 10-15% slower)",
-           L"3840x2160 (very demanding)"},
+          {L"1080p (native, fastest)", L"1440p (sharper, about 10-15% slower)",
+           L"2160p (very demanding)"},
           s.render_res == 2160   ? 2
           : s.render_res == 1440 ? 1
                                  : 0);
@@ -767,9 +791,11 @@ std::optional<fs::path> Run() {
 #endif
     WriteGameConfig(s);
     ApplyRuntime(s);
-    LOG_INFO(Loader, "Launcher: {} FPS, {} {}x{}, {}, sharpening {}", s.target_fps,
-             s.fullscreen ? "fullscreen" : "window", s.width, s.height,
-             s.fsr ? "FSR 1" : "bilinear", s.sharpening);
+    const auto out = TargetOutput(s);
+    LOG_INFO(Loader, "Launcher: {} FPS, {} {}x{}, {}, sharpening {}, output {}x{}{}",
+             s.target_fps, s.fullscreen ? "fullscreen" : "window", s.width, s.height,
+             s.fsr ? "FSR 1" : "bilinear", s.sharpening, out.width, out.height,
+             out.wide ? " (widescreen)" : "");
     return fs::path(s.game_dir);
 }
 
