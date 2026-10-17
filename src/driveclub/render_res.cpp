@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 
 #include "common/logging/log.h"
 #include "driveclub/render_res.h"
@@ -107,40 +108,99 @@ u32 Bits(Kind kind, u32 w, u32 h) {
 
 } // namespace
 
-// The VRAM_RENDERING heap's base size (512 MiB) in the game's memory setup (0x149a80):
-// mov qword ptr [rbp - 0x98], 0x20000000. Larger render targets (the game's own -increasedrender
-// / -resolutionscale switches) do not fit in it; DCPC_RENDER_HEAP_MB raises it. The world heap
-// takes the remainder of VideoPrivate, so General.extra_dmem_in_mbytes should grow with it.
+// Heap sizes come from the game's memory budget, looked up by name. The engine's own
+// higher-resolution switches (-increasedrender, -resolutionscale) need a bigger VRAM_RENDERING
+// heap, and VideoPrivate (direct memory, contains VRAM_RENDERING) must grow by the same amount.
+// DCPC_VRAM_EXTRA_MB=<n> adds n MiB to both by diverting two lookups to stubs in the zero padding
+// after the code segment (call lookup; add rax, n MiB; original register move; jmp back):
+// - eboot+0x15ad25 in the base-heap setup: VideoPrivate size (lookup 0x568a30, mov r12, rax);
+// - eboot+0x15a697 in the heap creator: every heap's size (lookup 0x568a20, mov r14, rax),
+//   adjusted only when the name (r15) is the "VRAM_RENDERING" literal.
+// The emulator must provide the extra direct memory (General.extra_dmem_in_mbytes >= n).
 void ApplyHeap(VAddr base, u64 size) {
-    const char* env = std::getenv("DCPC_RENDER_HEAP_MB");
+    const char* env = std::getenv("DCPC_VRAM_EXTRA_MB");
     const u32 mb = env ? static_cast<u32>(std::strtoul(env, nullptr, 10)) : 0;
     if (mb == 0) {
         return;
     }
-    if (mb < 512 || mb > 2047) {
-        LOG_WARNING(Loader, "driveclub-pc: DCPC_RENDER_HEAP_MB={} out of range 512..2047", mb);
+    if (mb > 2047) {
+        LOG_WARNING(Loader, "driveclub-pc: DCPC_VRAM_EXTRA_MB={} above 2047, ignored", mb);
         return;
     }
-    // Two memory setups carry the same table: 0x149a80 ([rbp - 0x98]) and 0x5b5310 ([rbp - 0x90]).
-    struct HeapSite {
-        u64 addr;
-        u8 disp;
+    struct Site {
+        u64 addr; // call lookup (5 bytes) followed by a 3-byte mov reg, rax
+        u64 lookup;
+        u8 mov[3];
+        u64 name; // only when r15 holds this literal (0: always)
+        const char* literal;
     };
-    constexpr HeapSite kHeapSites[] = {{0x149e50, 0x68}, {0x5b5576, 0x70}};
-    const u32 bytes = mb << 20;
-    for (const auto& site : kHeapSites) {
-        const u8 expected[] = {0x48, 0xc7, 0x85, site.disp, 0xff, 0xff,
-                               0xff, 0x00, 0x00, 0x00,      0x20};
-        u8* insn = reinterpret_cast<u8*>(base + site.addr);
-        if (site.addr + sizeof(expected) > size ||
-            std::memcmp(insn, expected, sizeof(expected)) != 0) {
-            LOG_WARNING(Loader, "driveclub-pc: render heap site {:#x} does not match, skipped",
-                        site.addr);
-            continue;
-        }
-        std::memcpy(insn + 7, &bytes, 4);
-        LOG_INFO(Loader, "driveclub-pc: VRAM_RENDERING base size {} MiB at {:#x}", mb, site.addr);
+    constexpr Site kSites[] = {
+        {0x15ad25, 0x568a30, {0x49, 0x89, 0xc4}, 0, nullptr},
+        {0x15a697, 0x568a20, {0x49, 0x89, 0xc6}, 0x12ae992, "VRAM_RENDERING"},
+    };
+    constexpr u64 kCave = 0x1552000; // inside the mapped tail of the code segment
+    constexpr u32 kCaveBytes = 96;
+    if (kCave + kCaveBytes > size) {
+        return;
     }
+    for (const auto& site : kSites) {
+        const u8* p = reinterpret_cast<const u8*>(base + site.addr);
+        s32 disp;
+        std::memcpy(&disp, p + 1, 4);
+        if (p[0] != 0xe8 || site.addr + 5 + disp != site.lookup ||
+            std::memcmp(p + 5, site.mov, 3) != 0 ||
+            (site.literal &&
+             std::strcmp(reinterpret_cast<const char*>(base + site.name), site.literal) != 0)) {
+            LOG_WARNING(Loader, "driveclub-pc: heap size site {:#x} does not match, skipped",
+                        site.addr);
+            return;
+        }
+    }
+    u8* c = reinterpret_cast<u8*>(base + kCave);
+    for (u32 i = 0; i < kCaveBytes; ++i) {
+        if (c[i] != 0) {
+            LOG_WARNING(Loader, "driveclub-pc: heap stub area is not free, skipped");
+            return;
+        }
+    }
+    const s32 delta = static_cast<s32>(mb << 20);
+    u32 n = 0;
+    const auto emit = [&](std::initializer_list<u8> bytes) {
+        for (u8 v : bytes) {
+            c[n++] = v;
+        }
+    };
+    const auto emit_rel = [&](u64 target) {
+        const s32 v = static_cast<s32>(target - (kCave + n + 4));
+        std::memcpy(c + n, &v, 4);
+        n += 4;
+    };
+    for (const auto& site : kSites) {
+        const u64 stub = kCave + n;
+        emit({0xe8}); // call lookup
+        emit_rel(site.lookup);
+        if (site.literal) {
+            emit({0x48, 0xb9}); // mov rcx, imm64 (caller-saved, dead after the call)
+            const u64 ptr = base + site.name;
+            std::memcpy(c + n, &ptr, 8);
+            n += 8;
+            emit({0x4c, 0x39, 0xf9}); // cmp rcx, r15
+            emit({0x75, 0x06});       // jne over the add
+        }
+        emit({0x48, 0x05}); // add rax, imm32
+        std::memcpy(c + n, &delta, 4);
+        n += 4;
+        emit({site.mov[0], site.mov[1], site.mov[2]});
+        emit({0xe9}); // jmp back
+        emit_rel(site.addr + 8);
+        u8* p = reinterpret_cast<u8*>(base + site.addr);
+        p[0] = 0xe9; // jmp stub
+        const s32 to_stub = static_cast<s32>(stub - (site.addr + 5));
+        std::memcpy(p + 1, &to_stub, 4);
+        std::memset(p + 5, 0x90, 3);
+    }
+    LOG_INFO(Loader, "driveclub-pc: VideoPrivate and VRAM_RENDERING +{} MiB ({} stub bytes)", mb,
+             n);
 }
 
 void Apply(VAddr base, u64 size) {
