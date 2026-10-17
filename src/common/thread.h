@@ -29,6 +29,15 @@ void SetThreadName(void* thread, const char* name);
 // driveclub-pc: constrain critical threads to available performance CPUs on hybrid Windows hosts.
 void PinPerformanceThread(const char* name);
 
+/// driveclub-pc: logical CPUs of the fastest efficiency class (first 64), 0 on homogeneous hosts.
+u64 GetPerformanceCoreMask();
+
+/// driveclub-pc: command processor scheduling. Wide: all performance CPUs with the reserved CPU
+/// as the ideal processor and THREAD_PRIORITY_HIGHEST, so a busy reserved CPU no longer holds the
+/// thread for a scheduler quantum. Otherwise the reserved CPU only at normal priority (the
+/// gpu_thread_core_reserve behaviour). Calling thread only; Windows only.
+void SetCommandProcessorScheduling(bool wide);
+
 /// Hard-pins the calling thread to the given logical CPUs (bit N = CPU N, first 64 only).
 /// Linux and Windows; a no-op returning false elsewhere.
 bool SetCurrentThreadAffinityMask(u64 mask);

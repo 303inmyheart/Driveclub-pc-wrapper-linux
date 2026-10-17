@@ -1,17 +1,21 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include <ctime>
+#include <string>
 #include <thread>
 
 #include "common/assert.h"
 #include "common/native_clock.h"
+#include "common/rdtsc.h"
 #include "common/thread.h"
 #include "core/libraries/kernel/kernel.h"
 #include "core/libraries/kernel/orbis_error.h"
 #include "core/libraries/kernel/posix_error.h"
 #include "core/libraries/kernel/time.h"
 #include "core/libraries/libs.h"
+#include "driveclub/frame_profiler.h"
 
 #ifdef _WIN64
 #include <windows.h>
@@ -20,7 +24,9 @@
 #if defined(__APPLE__) || defined(__FreeBSD__)
 #include <date/tz.h>
 #endif
+#include <cstdlib>
 #include <ctime>
+#include <string>
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -37,7 +43,90 @@ u64 PS4_SYSV_ABI sceKernelGetTscFrequency() {
     return clock->GetTscFrequency();
 }
 
+#ifdef _WIN32
+namespace {
+// driveclub-pc: Game:Main polls the process time in a tight loop (~4.7 million calls/s at
+// 120 FPS, docs/benchmarks.md), keeping a P-core busy on a laptop whose CPU shares one power
+// budget with the command processor's core. After 256 back-to-back calls (< 2 us apart) the
+// thread sleeps ~100 us on a high-resolution timer; the time it reads stays exact.
+// DCPC_TIME_SPIN=1 enables it, DCPC_TIME_SPIN_AB=1 alternates every 10 s (profiler phase 1 = on).
+int TimeSpinMode() {
+    static const int mode = [] {
+        const char* ab = std::getenv("DCPC_TIME_SPIN_AB");
+        if (ab && ab[0] == '1') {
+            return 2;
+        }
+        const char* on = std::getenv("DCPC_TIME_SPIN");
+        return on && on[0] == '1' ? 1 : 0;
+    }();
+    return mode;
+}
+
+thread_local int t_is_main = -1;
+thread_local u32 t_unnamed_calls = 0;
+thread_local u64 t_last_call = 0;
+thread_local u32 t_streak = 0;
+thread_local u32 t_phase = 2;
+thread_local HANDLE t_timer = nullptr;
+
+void RelieveTimeSpin() {
+    const int mode = TimeSpinMode();
+    if (mode == 0) {
+        return;
+    }
+    if (t_is_main < 0) {
+        if ((t_unnamed_calls++ & 4095) != 0) {
+            return;
+        }
+        const std::string name = Common::GetCurrentThreadName();
+        if (name.empty()) {
+            return;
+        }
+        t_is_main = name == "Game:Main" ? 1 : 0;
+    }
+    if (t_is_main == 0) {
+        return;
+    }
+    static const u64 ticks_per_us = Common::EstimateRDTSCFrequency() / 1'000'000;
+    const u64 now = __rdtsc();
+    t_streak = now - t_last_call < 2 * ticks_per_us ? t_streak + 1 : 0;
+    t_last_call = now;
+    if (t_streak < 256) {
+        return;
+    }
+    t_streak = 0;
+    if (mode == 2) {
+        const u32 phase = static_cast<u32>((now / (ticks_per_us * 10'000'000)) & 1);
+        if (phase != t_phase) {
+            t_phase = phase;
+            DriveclubPC::Profiler::SetPhase(phase);
+        }
+        if (phase == 0) {
+            return;
+        }
+    }
+    if (!t_timer) {
+        t_timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                         TIMER_ALL_ACCESS);
+        if (!t_timer) {
+            return;
+        }
+    }
+    LARGE_INTEGER due{};
+    due.QuadPart = -1000; // 100 us, relative, in 100 ns units
+    if (SetWaitableTimer(t_timer, &due, 0, nullptr, nullptr, FALSE)) {
+        WaitForSingleObject(t_timer, INFINITE);
+        DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::TimeSpinSleeps);
+    }
+    t_last_call = __rdtsc();
+}
+} // namespace
+#endif
+
 u64 PS4_SYSV_ABI sceKernelGetProcessTime() {
+#ifdef _WIN32
+    RelieveTimeSpin();
+#endif
     // TODO: this timer should support suspends, so initial ptc needs to be updated on wake up
     return clock->GetTimeUS(initial_ptc);
 }

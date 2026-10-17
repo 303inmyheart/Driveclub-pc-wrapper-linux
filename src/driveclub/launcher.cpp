@@ -44,12 +44,15 @@ struct Settings {
     int height = 0;
     bool fsr = true;
     int sharpening = 1; ///< 0 off, 1 normal, 2 strong
-    int readbacks = 2;  ///< driveclub-pc: 0 off, 1 relaxed, 2 precise (default: Relaxed broke shadows
-                        ///< and vegetation in the owner's races)
+    int readbacks = 2;  ///< driveclub-pc: 0 off, 1 relaxed, 2 precise (default: Relaxed broke
+                       ///< shadows and vegetation in the owner's races)
     // driveclub-pc: image quality and hybrid CPU settings.
     int af = 16;
     int aa = 1;
     bool pcore_pin = true;
+    // driveclub-pc: the game's own render scaling (render_res.h): 1080, 1440 or 2160 lines.
+    int render_res = 1080;
+    bool async_shaders = true; ///< shader translation and pipeline creation off-thread
     bool show_fps = false;
     bool deferred_recording = false;
     bool classic_vblank = false;
@@ -95,6 +98,11 @@ Settings Load() {
         s.af = 0;
     s.aa = std::clamp(num("aa", s.aa), 0, 2);
     s.pcore_pin = num("pcore_pin", 1) != 0;
+    s.render_res = num("render_res", s.render_res);
+    if (s.render_res != 1440 && s.render_res != 2160) {
+        s.render_res = 1080;
+    }
+    s.async_shaders = num("async_shaders", 1) != 0;
     s.show_fps = num("show_fps", s.show_fps) != 0;
     s.deferred_recording = num("deferred_recording", s.deferred_recording) != 0;
     s.classic_vblank = num("classic_vblank", s.classic_vblank) != 0;
@@ -119,6 +127,8 @@ void Save(const Settings& s) {
         << "af=" << s.af << "\n"
         << "aa=" << s.aa << "\n"
         << "pcore_pin=" << int(s.pcore_pin) << "\n"
+        << "render_res=" << s.render_res << "\n"
+        << "async_shaders=" << int(s.async_shaders) << "\n"
         << "show_fps=" << int(s.show_fps) << "\n"
         << "deferred_recording=" << int(s.deferred_recording) << "\n"
         << "classic_vblank=" << int(s.classic_vblank) << "\n"
@@ -136,6 +146,11 @@ std::pair<int, int> DisplaySize() {
     }
 #endif
     return {width, height};
+}
+
+/// driveclub-pc: extra video memory the game needs for its render targets at this height.
+int ExtraVramMb(int render_res) {
+    return render_res == 2160 ? 1536 : render_res == 1440 ? 1024 : 0;
 }
 
 /// Writes the graphics settings into the per-game emulator config, keeping its other keys.
@@ -163,6 +178,9 @@ void WriteGameConfig(const Settings& s) {
     gpu["rcas_enabled"] = s.sharpening != 0;
     gpu["rcas_attenuation"] = s.sharpening == 2 ? 100 : 250;
     gpu["readbacks_mode"] = s.readbacks;
+    // driveclub-pc: a higher render resolution needs a bigger video-memory budget in the game
+    // (DCPC_VRAM_EXTRA_MB below), backed by extra direct memory.
+    json["General"]["extra_dmem_in_mbytes"] = ExtraVramMb(s.render_res);
     std::ofstream out(path);
     out << json.dump(2) << "\n";
 }
@@ -182,6 +200,16 @@ void ApplyRuntime(const Settings& s) {
     SetEnvDefault("DCPC_AF", std::to_string(s.af));
     SetEnvDefault("DCPC_AA", std::to_string(s.aa));
     SetEnvDefault("DCPC_PCORE_PIN", s.pcore_pin ? "1" : "0");
+    SetEnvDefault("DCPC_ASYNC_SHADERS", s.async_shaders ? "1" : "0");
+    SetEnvDefault("DCPC_ASYNC_PIPELINES", s.async_shaders ? "1" : "0");
+    if (s.render_res != 1080) {
+        // The engine's own -resolutionscale switch scales its render targets (width aligned to
+        // 128, height = width * 9 / 16); the game's display buffers follow DCPC_RENDER_RES.
+        const bool uhd = s.render_res == 2160;
+        SetEnvDefault("DCPC_GAME_ARGS", uhd ? "-resolutionscale 2" : "-resolutionscale 1.3333");
+        SetEnvDefault("DCPC_VRAM_EXTRA_MB", std::to_string(ExtraVramMb(s.render_res)));
+        SetEnvDefault("DCPC_RENDER_RES", uhd ? "3840x2160" : "2560x1440");
+    }
     SetEnvDefault("DCPC_TARGET_FPS", std::to_string(s.target_fps));
     SetEnvDefault("DCPC_DEFERRED_RECORDING", s.deferred_recording ? "1" : "0");
     SetEnvDefault("DCPC_CLASSIC_VBLANK", s.classic_vblank ? "1" : "0");
@@ -227,12 +255,14 @@ enum Id : int {
     IdFps,
     IdDisplay,
     IdResolution,
+    IdRenderRes,
     IdUpscaling,
     IdSharpening,
     IdReadbacks,
     IdAf,
     IdAa,
     IdPcore,
+    IdAsyncShaders,
     IdShowFps,
     IdDeferred,
     IdClassic,
@@ -357,8 +387,8 @@ void CollectSettings() {
     static constexpr int fps_values[] = {30, 60, 120};
     s.target_fps = fps_values[std::clamp(ComboIndex(IdFps), 0, 2)];
     s.fullscreen = ComboIndex(IdDisplay) == 0;
-    const int res = std::clamp(ComboIndex(IdResolution), 0,
-                               static_cast<int>(g_ui->resolutions.size()) - 1);
+    const int res =
+        std::clamp(ComboIndex(IdResolution), 0, static_cast<int>(g_ui->resolutions.size()) - 1);
     s.width = g_ui->resolutions[res].first;
     s.height = g_ui->resolutions[res].second;
     s.fsr = ComboIndex(IdUpscaling) == 0;
@@ -368,18 +398,29 @@ void CollectSettings() {
     s.af = af_values[std::clamp(ComboIndex(IdAf), 0, 4)];
     s.aa = std::clamp(ComboIndex(IdAa), 0, 2);
     s.pcore_pin = Checked(IdPcore);
+    static constexpr int render_values[] = {1080, 1440, 2160};
+    s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 2)];
+    s.async_shaders = Checked(IdAsyncShaders);
     s.show_fps = Checked(IdShowFps);
     s.deferred_recording = Checked(IdDeferred);
     s.classic_vblank = Checked(IdClassic);
     s.show_launcher = Checked(IdShowLauncher);
 }
 
-HWND Make(const wchar_t* cls, const wchar_t* text, DWORD style, float x, float y, float w,
-          float h, int id, DWORD ex_style = 0) {
-    HWND hwnd = CreateWindowExW(ex_style, cls, text, WS_CHILD | WS_VISIBLE | style, Px(x), Px(y),
-                                Px(w), Px(h), g_ui->window,
-                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                GetModuleHandleW(nullptr), nullptr);
+/// driveclub-pc: the window size only applies in windowed mode.
+void UpdateWindowSizeEnabled() {
+    const auto it = g_ui->controls.find(IdResolution);
+    if (it != g_ui->controls.end()) {
+        EnableWindow(it->second, ComboIndex(IdDisplay) == 1);
+    }
+}
+
+HWND Make(const wchar_t* cls, const wchar_t* text, DWORD style, float x, float y, float w, float h,
+          int id, DWORD ex_style = 0) {
+    HWND hwnd =
+        CreateWindowExW(ex_style, cls, text, WS_CHILD | WS_VISIBLE | style, Px(x), Px(y), Px(w),
+                        Px(h), g_ui->window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                        GetModuleHandleW(nullptr), nullptr);
     SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(g_ui->font), TRUE);
     if (id > 0) {
         g_ui->controls[id] = hwnd;
@@ -422,7 +463,9 @@ void BuildControls() {
     Label(L"Frame rate", L, y, 140);
     Combo(IdFps, C, y, W,
           {L"30 FPS (as on PS4)", L"60 FPS (recommended)", L"120 FPS (experimental)"},
-          s.target_fps == 30 ? 0 : s.target_fps == 120 ? 2 : 1);
+          s.target_fps == 30    ? 0
+          : s.target_fps == 120 ? 2
+                                : 1);
     y += Row;
 
     Label(L"Display", L, y, 140);
@@ -430,25 +473,37 @@ void BuildControls() {
     y += Row;
 
     const auto [dw, dh] = DisplaySize();
-    ui.resolutions = {{0, 0}, {3840, 2160}, {2560, 1600}, {2560, 1440}, {1920, 1200},
-                      {1920, 1080}, {1600, 900}, {1280, 720}};
+    ui.resolutions = {{0, 0},       {3840, 2160}, {2560, 1600}, {2560, 1440},
+                      {1920, 1200}, {1920, 1080}, {1600, 900},  {1280, 720}};
     std::vector<std::wstring> res_items;
     int res_sel = 0;
     for (size_t i = 0; i < ui.resolutions.size(); ++i) {
         const auto [w, h] = ui.resolutions[i];
-        res_items.push_back(i == 0 ? Widen(fmt::format("Display resolution ({}x{})", dw, dh))
+        res_items.push_back(i == 0 ? Widen(fmt::format("Same as the display ({}x{})", dw, dh))
                                    : Widen(fmt::format("{}x{}", w, h)));
         if (w == s.width && h == s.height) {
             res_sel = static_cast<int>(i);
         }
     }
-    Label(L"Resolution", L, y, 140);
+    // driveclub-pc: borderless fullscreen always covers the whole display; this is only the size
+    // of the window in windowed mode.
+    Label(L"Window size", L, y, 140);
     Combo(IdResolution, C, y, W, res_items, res_sel);
+    UpdateWindowSizeEnabled();
+    y += Row;
+
+    Label(L"Render resolution", L, y, 140);
+    Combo(IdRenderRes, C, y, W,
+          {L"1920x1080 (native, fastest)", L"2560x1440 (sharper, about 10-15% slower)",
+           L"3840x2160 (very demanding)"},
+          s.render_res == 2160   ? 2
+          : s.render_res == 1440 ? 1
+                                 : 0);
     y += Row;
 
     Label(L"Upscaling", L, y, 140);
-    Combo(IdUpscaling, C, y, W,
-          {L"AMD FSR 1 (game renders at 1920x1080)", L"Bilinear"}, s.fsr ? 0 : 1);
+    Combo(IdUpscaling, C, y, W, {L"AMD FSR 1 (game image to window size)", L"Bilinear"},
+          s.fsr ? 0 : 1);
     y += Row;
 
     Label(L"Sharpening", L, y, 140);
@@ -477,6 +532,11 @@ void BuildControls() {
     Make(L"BUTTON", L"Prefer performance cores (hybrid CPUs)", BS_AUTOCHECKBOX | WS_TABSTOP, C, y,
          W, 22, IdPcore);
     SendMessageW(ui.controls[IdPcore], BM_SETCHECK, s.pcore_pin ? BST_CHECKED : BST_UNCHECKED, 0);
+    y += 26;
+    Make(L"BUTTON", L"Compile shaders in the background (less stutter)",
+         BS_AUTOCHECKBOX | WS_TABSTOP, C, y, W, 22, IdAsyncShaders);
+    SendMessageW(ui.controls[IdAsyncShaders], BM_SETCHECK,
+                 s.async_shaders ? BST_CHECKED : BST_UNCHECKED, 0);
     y += 26;
     Make(L"BUTTON", L"Show FPS counter", BS_AUTOCHECKBOX | WS_TABSTOP, C, y, W, 22, IdShowFps);
     SendMessageW(ui.controls[IdShowFps], BM_SETCHECK, s.show_fps ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -555,6 +615,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case IdImport:
             ImportFirmware();
             return 0;
+        case IdDisplay:
+            if (HIWORD(wp) == CBN_SELCHANGE) {
+                UpdateWindowSizeEnabled();
+            }
+            return 0;
         case IdPlay:
             CollectSettings();
             g_ui->play = true;
@@ -608,14 +673,13 @@ bool ShowWindow(Settings& s) {
     wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
     RegisterClassExW(&wc);
 
-    RECT rect{0, 0, Px(600), Px(694)};
+    RECT rect{0, 0, Px(600), Px(756)};
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     AdjustWindowRectExForDpi(&rect, style, FALSE, 0, GetDpiForSystem());
     const int w = rect.right - rect.left, h = rect.bottom - rect.top;
-    ui.window = CreateWindowExW(0, wc.lpszClassName, L"Driveclub-PC", style,
-                                (GetSystemMetrics(SM_CXSCREEN) - w) / 2,
-                                (GetSystemMetrics(SM_CYSCREEN) - h) / 2, w, h, nullptr, nullptr,
-                                inst, nullptr);
+    ui.window = CreateWindowExW(
+        0, wc.lpszClassName, L"Driveclub-PC", style, (GetSystemMetrics(SM_CXSCREEN) - w) / 2,
+        (GetSystemMetrics(SM_CYSCREEN) - h) / 2, w, h, nullptr, nullptr, inst, nullptr);
     BuildControls();
     RefreshStatus();
     ::ShowWindow(ui.window, SW_SHOW);
@@ -643,9 +707,10 @@ bool ShowWindow(Settings& s) {
         SendMessageW(ui.window, WM_PRINT, reinterpret_cast<WPARAM>(mem),
                      PRF_NONCLIENT | PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND);
         const DWORD stride = static_cast<DWORD>((sw * 3 + 3) & ~3);
-        BITMAPFILEHEADER fh{0x4D42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) +
-                                                       sizeof(BITMAPINFOHEADER) + stride * sh),
-                            0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
+        BITMAPFILEHEADER fh{
+            0x4D42,
+            static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + stride * sh),
+            0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
         std::ofstream f(snapshot, std::ios::binary);
         f.write(reinterpret_cast<const char*>(&fh), sizeof(fh));
         f.write(reinterpret_cast<const char*>(&bi.bmiHeader), sizeof(bi.bmiHeader));

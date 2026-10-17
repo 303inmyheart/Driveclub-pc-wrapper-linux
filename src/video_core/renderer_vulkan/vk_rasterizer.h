@@ -79,6 +79,9 @@ public:
     void CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, bool src_gds);
     u32 ReadDataFromGds(u32 gsd_offset);
     bool InvalidateMemory(VAddr addr, u64 size, bool assume_locks = false);
+    /// driveclub-pc: after a CPU write fault at addr, unprotects the write-watched pages around it
+    /// (DCPC_WRITE_WINDOW KiB, aligned) that hold no GPU data and no image. Returns the pages.
+    u64 PrefaultWriteWindow(VAddr addr);
     bool TryCpWriteBacking(VAddr addr, const void* data, u64 size);
     bool ReadMemory(VAddr addr, u64 size, bool assume_locks = false);
     /// True when a guest read of [addr, addr + size) faults only because its page is GPU
@@ -86,6 +89,11 @@ public:
     bool IsReadOfCpuDataOnGpuPage(VAddr addr, u64 size) {
         return IsMapped(addr, size) && buffer_cache.IsRegionGpuModified(addr, size) &&
                !buffer_cache.IsGpuData(addr, size);
+    }
+    /// driveclub-pc: true when some byte of the range holds GPU-written data not yet in guest
+    /// memory (byte precise with readback offload; conservatively true without it).
+    bool HasGpuData(VAddr addr, u64 size) {
+        return IsMapped(addr, size) && buffer_cache.IsGpuData(addr, size);
     }
     bool IsMapped(VAddr addr, u64 size);
     void MapMemory(VAddr addr, u64 size);

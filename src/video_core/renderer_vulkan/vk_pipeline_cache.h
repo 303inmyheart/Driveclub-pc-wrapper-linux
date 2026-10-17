@@ -4,8 +4,12 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <memory>
+#include <optional>
+#include <span>
 #include <variant>
+#include <vector>
 #include <tsl/robin_map.h>
 #include "common/assert.h"
 #include "shader_recompiler/profile.h"
@@ -127,6 +131,13 @@ struct Program {
     Program() = default;
     Program(Shader::HwStage stage, Shader::SwStage l_stage, Shader::ShaderParams params)
         : info{stage, l_stage, params} {}
+
+    // driveclub-pc: user data a program translated off-thread was built from (see
+    // AsyncShaderJob); info.user_data points here until the next lookup re-points it.
+    std::array<u32, Shader::ShaderParams::NumShaderUserData> async_ud{};
+    // driveclub-pc: an off-thread permutation came out different from the draw that asked for it
+    // (the game rewrote its descriptors meanwhile); this program now compiles synchronously.
+    bool async_sync_only{};
 
     void AddPermut(vk::ShaderModule module, Shader::StageSpecialization&& spec) {
         const u64 sig = spec.sig;
@@ -381,6 +392,35 @@ private:
     SHAD_FORCE_INLINE u64 Publish(u32 out_slot, Shader::SwStage l_stage,
                                   const Shader::Info* out_info, vk::ShaderModule module,
                                   const Program* pgm, u32 perm_idx, u64 hash);
+    // driveclub-pc: shader translation off the command processor (DCPC_ASYNC_SHADERS).
+    struct AsyncShaderJob {
+        std::unique_ptr<Program> program;      // a new program (its permutation 0), or
+        std::optional<Shader::Info> perm_info; // a new permutation of an existing program
+        Shader::StageSpecialization spec;      // what the module was built for (set by the job)
+        Shader::StageSpecialization key_spec;  // permutation: the requesting draw's specialization
+        std::optional<Shader::RuntimeInfo> runtime_info; // optional: no default constructor
+        Shader::Backend::Bindings start;
+        std::array<u32, Shader::ShaderParams::NumShaderUserData> ud{};
+        std::span<const u32> code;
+        std::vector<u32> spv;
+        vk::ShaderModule module{};
+        std::atomic<bool> done{false};
+    };
+    bool AsyncShaderEligible(Shader::HwStage stage, Shader::SwStage l_stage) const;
+    void RunAsyncShaderJob(AsyncShaderJob& job) const;
+    void FinishAsyncShaderJob(AsyncShaderJob& job, u64 hash, size_t perm_idx);
+    /// Null while the program's translation is still running (the draw is then skipped).
+    Program* AsyncCreateProgram(Shader::HwStage stage, Shader::SwStage l_stage,
+                                const Shader::ShaderParams& params,
+                                const Shader::Backend::Bindings& binding);
+    bool async_shaders{};
+    bool async_shader_vs{};
+    bool async_shader_fs{};
+    bool stage_pending{};
+    tsl::robin_map<u64, std::shared_ptr<AsyncShaderJob>> pending_programs;
+    tsl::robin_map<const Program*, std::vector<std::shared_ptr<AsyncShaderJob>>> pending_perms;
+    u64 async_shader_jobs{};
+
     SHAD_NO_INLINE u64 CreateProgramSlow(Shader::HwStage stage, Shader::SwStage l_stage,
                                          const Shader::ShaderParams& params,
                                          Shader::Backend::Bindings& binding, u32 out_slot,

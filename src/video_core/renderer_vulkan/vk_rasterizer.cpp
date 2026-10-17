@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <bit>
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 
@@ -9,11 +12,15 @@
 
 #include "common/rdtsc.h"
 
+#include "common/alignment.h"
 #include "common/debug.h"
-#include "driveclub/performance.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
+#include "driveclub/async_pipelines.h"
+#include "driveclub/diag_tables.h"
+#include "driveclub/frame_profiler.h"
+#include "driveclub/performance.h"
 #include "shader_recompiler/resource.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -591,6 +598,11 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
     if (!pipeline) {
         return;
     }
+    if (!pipeline->IsReady()) {
+        // driveclub-pc: still compiling on a worker (DCPC_ASYNC_PIPELINES); skip the draw.
+        DriveclubPC::AsyncPipelines::CountSkip();
+        return;
+    }
 
     // One shared-lock hold covers every guest copy of the whole draw setup;
     // the per-function scopes inside become TLS-flag no-ops. Placed after the
@@ -815,6 +827,11 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
     };
     const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline(params);
     if (!pipeline) {
+        return;
+    }
+    if (!pipeline->IsReady()) {
+        // driveclub-pc: still compiling on a worker (DCPC_ASYNC_PIPELINES); skip the draw.
+        DriveclubPC::AsyncPipelines::CountSkip();
         return;
     }
 
@@ -2990,6 +3007,12 @@ void Rasterizer::CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, b
             return;
         }
     }
+    if (DriveclubPC::DiagTables::Active() && !dst_gds && !src_gds) {
+        const u32 reason = (buffer_cache.IsRegionGpuModified(dst, num_bytes) ? 1u : 0u) |
+                           (buffer_cache.IsRegionGpuModified(src, num_bytes) ? 2u : 0u) |
+                           (texture_cache.FindImageFromRange(src, num_bytes) ? 4u : 0u);
+        DriveclubPC::DiagTables::NoteGpuCopy(dst, src, num_bytes, reason);
+    }
     texture_cache.InvalidateMemoryFromGPU(dst, num_bytes);
     const auto* gds_buffer = buffer_cache.GetGdsBuffer();
     const auto [src_buffer, src_offset] = [&] -> std::pair<const VideoCore::Buffer*, u64> {
@@ -3028,6 +3051,43 @@ bool Rasterizer::InvalidateMemory(VAddr addr, u64 size, bool assume_locks) {
     texture_cache.InvalidateMemory(addr, size);
     Skipcache::Framework::Instance().BumpMemGen();
     return true;
+}
+
+u64 Rasterizer::PrefaultWriteWindow(VAddr addr) {
+    static const u64 window = [] {
+        const char* env = std::getenv("DCPC_WRITE_WINDOW");
+        const u64 kb = env ? std::strtoull(env, nullptr, 10) : 0;
+        // A power of two of at least two pages; 0 disables.
+        return kb >= 8 && std::has_single_bit(kb) ? kb * 1024 : 0;
+    }();
+    static const bool ab = [] {
+        const char* env = std::getenv("DCPC_WRITE_WINDOW_AB");
+        return env && env[0] == '1';
+    }();
+    if (window == 0) {
+        return 0;
+    }
+    if (ab) {
+        // In-run A/B: on in odd 10 s periods (profiler phase 1).
+        const u64 period = static_cast<u64>(std::chrono::duration_cast<std::chrono::seconds>(
+                                                std::chrono::steady_clock::now().time_since_epoch())
+                                                .count() /
+                                            10);
+        const bool on = (period & 1) != 0;
+        DriveclubPC::Profiler::SetPhase(on ? 1 : 0);
+        if (!on) {
+            return 0;
+        }
+    }
+    const VAddr start = Common::AlignDown(addr, window);
+    if (!IsMapped(start, window) || texture_cache.MayCoverImage(start, window)) {
+        return 0;
+    }
+    const u64 pages = buffer_cache.PrefaultWriteWindow(start, window);
+    if (pages != 0) {
+        Skipcache::Framework::Instance().BumpMemGen();
+    }
+    return pages;
 }
 
 bool Rasterizer::TryCpWriteBacking(VAddr, const void*, u64) {

@@ -604,6 +604,24 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         LOG_INFO(Loader, "PSVR Supported: {}", (bool)psf_attributes.support_ps_vr.Value());
         LOG_INFO(Loader, "PSVR Required: {}", (bool)psf_attributes.require_ps_vr.Value());
     }
+    // driveclub-pc: DCPC_GAME_ARGS="-resolutionscale 1.5" appends space-separated guest arguments
+    // (the game's own developer switches, see docs/internal-resolution-plan.md).
+    if (const char* extra = std::getenv("DCPC_GAME_ARGS"); extra && extra[0]) {
+        std::string token;
+        for (const char* c = extra;; ++c) {
+            if (*c == ' ' || *c == '\0') {
+                if (!token.empty()) {
+                    args.push_back(token);
+                    token.clear();
+                }
+                if (*c == '\0') {
+                    break;
+                }
+            } else {
+                token += *c;
+            }
+        }
+    }
     if (!args.empty()) {
         const auto argc = std::min<size_t>(args.size(), 32);
         for (auto i = 0; i < argc; i++) {

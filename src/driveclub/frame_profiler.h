@@ -32,6 +32,19 @@
 //                         (DCPC_VK_STATS=1, otherwise 0; see vk_call_stats.h)
 //   main_hle_ms, main_fault_ms  Game:Main time in HLE calls and in guest fault handling
 //                         (DCPC_GUEST_STATS=1, otherwise 0; see guest_stats.h)
+//   Stutter diagnostics (events counted in the frame, see Event):
+//   resident_binds, resident_kb  buffer-cache arena blocks made resident (vkAllocateMemory +
+//                         sparse bind) and their size; sparse_submits  vkQueueBindSparse calls
+//   image_creates, image_deletes  texture-cache images created / deleted (garbage collector)
+//   image_uploads, image_upload_kb  CPU-written images uploaded (detiled) to the GPU
+//   file_reads, file_read_kb  game file reads (streaming)
+//   time_spin_sleeps      short sleeps inserted into Game:Main's time polling loop
+//                         (DCPC_TIME_SPIN, see kernel/time.cpp)
+//   gpu_ms, gpu_max_ms, gpu_batches  GPU execution time of the command processor's batches
+//                         completed in the frame (completion time minus the later of its submit
+//                         and the previous batch's completion), the longest batch, batch count
+//   submit_delay_max_ms, present_hold_max_ms  see MaxStat
+//   pipeline_skips        draws skipped while their pipeline compiled (DCPC_ASYNC_PIPELINES)
 // Every 600 frames the command processor also logs the wait addresses with the most time and which
 // game threads submitted to which queue.
 
@@ -58,8 +71,37 @@ void AddDescriptorPush(u32 writes, u32 elements);
 void AddDescriptorGapFill(u32 elements);
 void AddEmptyQueueSkips(u64 count);
 
+// driveclub-pc: stutter diagnostics; any thread, no-op unless profiling is enabled.
+enum class Event : u8 {
+    ResidentBinds,
+    ResidentKb,
+    SparseSubmits,
+    ImageCreates,
+    ImageDeletes,
+    ImageUploads,
+    ImageUploadKb,
+    FileReads,
+    FileReadKb,
+    TimeSpinSleeps,
+    Count
+};
+void AddEvent(Event event, u64 value = 1);
+
+// Largest value in the frame.
+//   SubmitDelay  a batch's wait on the submit thread: hand-over to vkQueueSubmit done
+//   PresentHold  the presenter holding the queue-submit lock around vkQueuePresentKHR
+// Columns submit_delay_max_ms, present_hold_max_ms.
+enum class MaxStat : u8 { SubmitDelay, PresentHold, Count };
+void AddMax(MaxStat stat, u64 ns);
+
+// GPU execution time of one command processor batch (from the GPU-completion watcher).
+void AddGpuBatch(u64 ns);
+
 // A/B phase written with every frame (column "phase"), for features that alternate at run time.
 void SetPhase(u32 phase);
+// Sets one bit of the phase, for two independent A/B toggles in one run (bit 0 readback
+// features DCPC_READBACK_AB, bit 1 depth alias parking DCPC_DEPTH_ALIAS_AB).
+void SetPhaseBit(u32 bit, bool on);
 
 // Called by the command processor for every address a GPU queue writes (fences, labels).
 // queue: 0 = graphics, otherwise the Gnm virtual compute queue id.

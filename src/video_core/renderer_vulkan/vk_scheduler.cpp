@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <cstdlib>
 #include <deque>
 #include <vector>
@@ -28,11 +29,82 @@ namespace {
 // driveclub-pc: queue submits of the GPU command processor's scheduler cost ~28 us each on
 // that thread (~34 per frame at the race start, docs/benchmarks.md). They are handed, in order,
 // to this thread instead; the batch contents and sizes stay the same.
+// driveclub-pc: with DCPC_PROFILE=1, measures how long the GPU spends on each batch the submit
+// thread hands over: it waits for every batch's timeline tick in order and books
+// completion - max(submit, previous completion) to the frame profiler (gpu_ms columns).
+struct GpuWatcher {
+    struct Batch {
+        vk::Semaphore semaphore;
+        u64 tick;
+        u64 submit_ns;
+    };
+
+    vk::Device device;
+    std::mutex mutex;
+    std::condition_variable_any cv;
+    std::deque<Batch> batches;
+    std::jthread thread;
+
+    void Start(vk::Device dev) {
+        if (thread.joinable() || !DriveclubPC::Profiler::Enabled()) {
+            return;
+        }
+        device = dev;
+        thread = std::jthread([this](std::stop_token stop) { Loop(stop); });
+    }
+
+    void Push(vk::Semaphore semaphore, u64 tick) {
+        if (!thread.joinable()) {
+            return;
+        }
+        {
+            std::scoped_lock lk{mutex};
+            batches.push_back({semaphore, tick, DriveclubPC::Profiler::NowNs()});
+        }
+        cv.notify_one();
+    }
+
+    void Loop(std::stop_token stop) {
+        Common::SetCurrentThreadName("dcpc:GpuWatcher");
+        u64 previous_done = 0;
+        while (true) {
+            Batch batch;
+            {
+                std::unique_lock lk{mutex};
+                cv.wait(lk, stop, [&] { return !batches.empty(); });
+                if (batches.empty()) {
+                    return;
+                }
+                batch = batches.front();
+                batches.pop_front();
+            }
+            const vk::SemaphoreWaitInfo wait_info = {
+                .semaphoreCount = 1,
+                .pSemaphores = &batch.semaphore,
+                .pValues = &batch.tick,
+            };
+            // Short timeouts so that shutdown is never blocked by a lost tick.
+            while (device.waitSemaphores(&wait_info, 100'000'000) != vk::Result::eSuccess) {
+                if (stop.stop_requested()) {
+                    return;
+                }
+            }
+            const u64 done = DriveclubPC::Profiler::NowNs();
+            const u64 start = std::max(batch.submit_ns, previous_done);
+            DriveclubPC::Profiler::AddGpuBatch(done > start ? done - start : 0);
+            previous_done = done;
+        }
+    }
+};
+
+GpuWatcher g_gpu_watcher;
+
 struct AsyncSubmitter {
     struct Job {
         vk::Queue queue;
         std::vector<vk::CommandBuffer> cmd_buffers;
         SubmitInfo info;
+        u64 push_ns = 0; // driveclub-pc: profiling only
     };
 
     std::mutex mutex;
@@ -53,6 +125,9 @@ struct AsyncSubmitter {
     void Push(Job job) {
         {
             std::scoped_lock lk{mutex};
+            if (DriveclubPC::Profiler::Enabled()) {
+                job.push_ns = DriveclubPC::Profiler::NowNs();
+            }
             jobs.push_back(std::move(job));
             ++queued;
         }
@@ -81,6 +156,10 @@ struct AsyncSubmitter {
                 jobs.pop_front();
             }
             Submit(job);
+            if (job.push_ns) {
+                DriveclubPC::Profiler::AddMax(DriveclubPC::Profiler::MaxStat::SubmitDelay,
+                                              DriveclubPC::Profiler::NowNs() - job.push_ns);
+            }
             {
                 std::scoped_lock lk{mutex};
                 ++completed;
@@ -114,6 +193,9 @@ struct AsyncSubmitter {
         ImGui::Core::TextureManager::Submit();
         const auto result = job.queue.submit(submit_info, info.fence);
         ASSERT_MSG(result != vk::Result::eErrorDeviceLost, "Device lost during submit");
+        // The scheduler's own timeline signal is added last.
+        g_gpu_watcher.Push(info.signal_semas[info.num_signal_semas - 1],
+                           info.signal_ticks[info.num_signal_semas - 1]);
     }
 };
 
@@ -127,6 +209,7 @@ void Scheduler::EnableAsyncSubmit() {
     async_submit = !(env && env[0] == '0');
     if (async_submit) {
         g_async_submitter.Start();
+        g_gpu_watcher.Start(instance.GetDevice());
         g_async_submit_used.store(true, std::memory_order_release);
         LOG_INFO(Render_Vulkan, "driveclub-pc: queue submits on a separate thread");
     }

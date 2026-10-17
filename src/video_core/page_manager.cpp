@@ -22,6 +22,7 @@
 #include "core/emulator_settings.h"
 #include "core/memory.h"
 #include "core/signals.h"
+#include "driveclub/diag_tables.h"
 #include "driveclub/frame_profiler.h"
 #include "driveclub/guest_stats.h"
 #include "video_core/page_manager.h"
@@ -46,6 +47,101 @@
 #endif
 
 namespace VideoCore {
+
+// driveclub-pc: hybrid readbacks (DCPC_READBACK_HYBRID=1, Precise mode only). Precise read-protects
+// every page the GPU writes, so that CPU reads of GPU results fault and download them. Most of
+// those pages are never read by the CPU. Here only 64 KiB windows the CPU has been seen reading
+// (a read fault) stay read-protected; the others behave like Relaxed. To find new readers, every
+// window is read-protected again for 1 s out of every 4 s ("probe"); a read fault during a probe
+// makes its window precise for good. DCPC_READBACK_HYBRID_AB=1 alternates hybrid (phase 1) and
+// plain Precise (phase 0) every 10 s.
+namespace ReadbackHybrid {
+constexpr u32 kWindowBits = 16;
+constexpr u32 kMaxWindows = 512;
+std::atomic<u64> g_windows[kMaxWindows]{};
+std::atomic<u32> g_count{};
+std::atomic<u64> g_promotions{};
+std::mutex g_add_mutex;
+
+u32 ReadMode() {
+    static const u32 mode = [] {
+        const char* env = std::getenv("DCPC_READBACK_HYBRID");
+        const char* ab = std::getenv("DCPC_READBACK_HYBRID_AB");
+        if (EmulatorSettings.GetReadbacksMode() != GpuReadbacksMode::Precise) {
+            return 0u;
+        }
+        if (ab && ab[0] == '1') {
+            return 2u;
+        }
+        return env && env[0] == '1' ? 1u : 0u;
+    }();
+    return mode;
+}
+
+/// Whether every window is read-protected right now (hybrid off, A/B phase 0, or a probe).
+bool AllPrecise() {
+    const u32 mode = ReadMode();
+    if (mode == 0) {
+        return true;
+    }
+    const u64 ms = static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch())
+                                        .count());
+    if (mode == 2) {
+        const bool on = ((ms / 10000) & 1) != 0;
+        DriveclubPC::Profiler::SetPhase(on ? 1 : 0);
+        if (!on) {
+            return true;
+        }
+    }
+    static const bool no_probe = [] {
+        const char* env = std::getenv("DCPC_READBACK_HYBRID_NONE");
+        return env && env[0] == '1';
+    }();
+    return !no_probe && ms % 4000 < 1000;
+}
+
+bool IsPreciseWindow(VAddr addr) {
+    // Diagnostic ceiling: DCPC_READBACK_HYBRID_NONE=1 keeps no window precise (Relaxed reads in
+    // the hybrid phase, so its stale reads can glitch).
+    static const bool none = [] {
+        const char* env = std::getenv("DCPC_READBACK_HYBRID_NONE");
+        return env && env[0] == '1';
+    }();
+    if (none) {
+        return false;
+    }
+    const u64 tag = (addr >> kWindowBits) + 1;
+    const u32 n = g_count.load(std::memory_order_acquire);
+    if (n >= kMaxWindows) {
+        return true;
+    }
+    for (u32 i = 0; i < n; ++i) {
+        if (g_windows[i].load(std::memory_order_relaxed) == tag) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void NoteRead(VAddr addr) {
+    if (ReadMode() == 0 || IsPreciseWindow(addr)) {
+        return;
+    }
+    std::scoped_lock lk{g_add_mutex};
+    if (IsPreciseWindow(addr)) {
+        return;
+    }
+    const u32 n = g_count.load(std::memory_order_relaxed);
+    if (n < kMaxWindows) {
+        g_windows[n].store((addr >> kWindowBits) + 1, std::memory_order_relaxed);
+    }
+    g_count.store(n + 1, std::memory_order_release);
+    g_promotions.fetch_add(1, std::memory_order_relaxed);
+    LOG_INFO(Render, "driveclub-pc: hybrid readbacks: window {:#x} is read by the CPU ({} precise)",
+             addr & ~((VAddr{1} << kWindowBits) - 1), n + 1);
+}
+} // namespace ReadbackHybrid
 
 struct PageManager::Impl {
     struct PageState {
@@ -212,6 +308,10 @@ struct PageManager::Impl {
         const u64 page_start = bounds.start_word * PAGES_PER_WORD + bounds.start_page;
         const u64 page_end = bounds.end_word * PAGES_PER_WORD + bounds.end_page + 1;
 
+        // driveclub-pc: hybrid readbacks decide read protection per window (see ReadbackHybrid).
+        const bool hybrid_track = read_op == PageOp::Track && !ReadbackHybrid::AllPrecise();
+        const bool hybrid = ReadbackHybrid::ReadMode() != 0;
+
         Core::MemoryPermission perms{};
         u64 range_begin = base_page + page_start;
         u64 range_pages = 0;
@@ -240,7 +340,19 @@ struct PageManager::Impl {
 
             // Apply the change to the page state
             const bool update_write = write_op != PageOp::None && write_mask.GetPage(page);
-            const bool update_read = read_op != PageOp::None && read_mask.GetPage(page);
+            bool update_read = read_op != PageOp::None && read_mask.GetPage(page);
+            if (update_read && hybrid) {
+                if (read_op == PageOp::Untrack) {
+                    // Pages a relaxed window left unprotected have no read watcher to drop.
+                    update_read = state->num_read_watchers != 0;
+                } else if (hybrid_track) {
+                    update_read =
+                        state->num_read_watchers == 0 &&
+                        ReadbackHybrid::IsPreciseWindow((base_page + page) << PM_PAGE_BITS);
+                } else {
+                    update_read = state->num_read_watchers == 0;
+                }
+            }
             const auto new_perms = state->Update(write_op, update_write, read_op, update_read);
 
             if (new_perms != perms) [[unlikely]] {
@@ -605,8 +717,9 @@ bool ReadbackFeaturesActive() {
         const char* env = std::getenv("DCPC_READBACK_AB");
         const bool on = env && std::strtoul(env, nullptr, 10) != 0;
         if (on) {
-            DriveclubPC::Profiler::SetPhase(1);
-            LOG_INFO(Render, "GPU readback features alternate every 10 s (profiler phase 1 = on)");
+            DriveclubPC::Profiler::SetPhaseBit(0, true);
+            LOG_INFO(Render,
+                     "GPU readback features alternate every 10 s (profiler phase bit 0 = on)");
         }
         return on;
     }();
@@ -625,7 +738,7 @@ bool ReadbackFeaturesActive() {
                phase_start_ns.compare_exchange_strong(start, now)) {
         const bool next = !active.load(std::memory_order_relaxed);
         active.store(next, std::memory_order_relaxed);
-        DriveclubPC::Profiler::SetPhase(next ? 1 : 0);
+        DriveclubPC::Profiler::SetPhaseBit(0, next);
     }
     return active.load(std::memory_order_relaxed);
 }
@@ -665,6 +778,8 @@ struct SignalImpl : public PageManager::Impl {
 
     // driveclub-pc: fault statistics, logged every 10 s (write/read faults, on guest threads
     // vs the GPU command thread), to judge whether a larger unprotect window would pay.
+    inline static std::atomic<u64> window_stats[2]{};
+
     static void CountFault(bool write, bool gpu_thread) {
         static std::atomic<u64> counts[4]{};
         static std::atomic<s64> last_report_ns{0};
@@ -677,13 +792,19 @@ struct SignalImpl : public PageManager::Impl {
             last_report_ns.compare_exchange_strong(last, now);
             return;
         }
-        if (now - last >= 10'000'000'000 &&
-            last_report_ns.compare_exchange_strong(last, now)) {
+        if (now - last >= 10'000'000'000 && last_report_ns.compare_exchange_strong(last, now)) {
             const double secs = static_cast<double>(now - last) / 1e9;
-            LOG_INFO(Render, "Guest faults per second: write {:.0f} (GPU thread {:.0f}), read {:.0f} "
-                             "(GPU thread {:.0f})",
+            LOG_INFO(Render,
+                     "Guest faults per second: write {:.0f} (GPU thread {:.0f}), read {:.0f} "
+                     "(GPU thread {:.0f})",
                      counts[0].exchange(0) / secs, counts[1].exchange(0) / secs,
                      counts[2].exchange(0) / secs, counts[3].exchange(0) / secs);
+            if (ReadbackHybrid::ReadMode() != 0) {
+                LOG_INFO(Render, "Hybrid readbacks: {} precise windows, {} new in this period",
+                         ReadbackHybrid::g_count.load(), ReadbackHybrid::g_promotions.exchange(0));
+            }
+            LOG_INFO(Render, "Write-fault windows per second {:.0f}, pages unprotected {:.0f}",
+                     window_stats[0].exchange(0) / secs, window_stats[1].exchange(0) / secs);
 #ifdef _WIN32
             LOG_INFO(Render,
                      "Read faults served from the backing view {:.0f}/s, needing GPU bytes "
@@ -720,8 +841,37 @@ struct SignalImpl : public PageManager::Impl {
         }
 #endif
         if (Common::IsWriteError(context)) {
-            return rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
+            bool handled;
+            if (DriveclubPC::DiagTables::Active()) {
+                const u64 start = DriveclubPC::Profiler::NowNs();
+                handled = rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
+                DriveclubPC::DiagTables::NoteFault(true, false,
+                                                   reinterpret_cast<u64>(Common::GetRip(context)),
+                                                   addr, DriveclubPC::Profiler::NowNs() - start);
+            } else {
+                handled = rasterizer->InvalidateMemory(addr, size, is_gpu_thread);
+            }
+            if (handled) {
+                // driveclub-pc: unprotect the neighbouring pages too (DCPC_WRITE_WINDOW).
+                if (const u64 pages = rasterizer->PrefaultWriteWindow(addr); pages != 0) {
+                    window_stats[0].fetch_add(1, std::memory_order_relaxed);
+                    window_stats[1].fetch_add(pages, std::memory_order_relaxed);
+                }
+            }
+            return handled;
         } else {
+            if (DriveclubPC::DiagTables::Active()) {
+                // driveclub-pc: which guest instruction reads GPU-written memory back.
+                const bool cpu_data = rasterizer->IsReadOfCpuDataOnGpuPage(addr, size);
+                const u64 start = DriveclubPC::Profiler::NowNs();
+                ReadbackHybrid::NoteRead(addr);
+                const bool handled = rasterizer->ReadMemory(addr, size, is_gpu_thread);
+                DriveclubPC::DiagTables::NoteFault(false, cpu_data,
+                                                   reinterpret_cast<u64>(Common::GetRip(context)),
+                                                   addr, DriveclubPC::Profiler::NowNs() - start);
+                return handled;
+            }
+            ReadbackHybrid::NoteRead(addr);
             return rasterizer->ReadMemory(addr, size, is_gpu_thread);
         }
         return false;

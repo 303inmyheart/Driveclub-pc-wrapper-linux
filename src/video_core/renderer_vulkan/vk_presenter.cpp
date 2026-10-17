@@ -1167,8 +1167,14 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     // Present to swapchain.
     {
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
+        const u64 hold_start =
+            DriveclubPC::Profiler::Enabled() ? DriveclubPC::Profiler::NowNs() : 0;
         if (!swapchain.Present()) {
             swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        }
+        if (hold_start) {
+            DriveclubPC::Profiler::AddMax(DriveclubPC::Profiler::MaxStat::PresentHold,
+                                          DriveclubPC::Profiler::NowNs() - hold_start);
         }
     }
 

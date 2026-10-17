@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <fmt/format.h>
+#include "driveclub/render_res.h"
 #include "common/alignment.h"
 #include "common/arch.h"
 #include "common/assert.h"
@@ -288,6 +289,8 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
             MemoryPatcher::g_eboot_image_size = base_size;
             MemoryPatcher::g_eboot_name = name;
             MemoryPatcher::OnGameLoaded();
+            // driveclub-pc: experimental render size (DCPC_RENDER_RES).
+            DriveclubPC::RenderRes::Apply(base_virtual_addr, base_size);
         }
     }
 

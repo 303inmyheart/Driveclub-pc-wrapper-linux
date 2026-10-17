@@ -15,6 +15,7 @@
 #include "core/emulator_settings.h"
 #include "core/libraries/kernel/threads/exception.h"
 #include "core/memory.h"
+#include "driveclub/diag_tables.h"
 #include "driveclub/frame_profiler.h"
 #include "driveclub/performance.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -224,6 +225,10 @@ void BufferCache::TickFrame() {
     }
 }
 
+u64 BufferCache::PrefaultWriteWindow(VAddr addr, u64 size) {
+    return memory_tracker->PrefaultWriteWindow(addr, size, [](VAddr) { return true; });
+}
+
 void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks) {
     memory_tracker->InvalidateRegion(device_addr, size, [this, device_addr, size, assume_locks] {
         ReadMemory(device_addr, size, true, assume_locks);
@@ -292,6 +297,13 @@ u64 BufferCache::CollectDownloads(const Buffer* arena, VAddr device_addr, u64 si
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
     // driveclub-pc: inclusive cost, including synchronous GPU waits.
     DriveclubPC::Profiler::CostScope cost{DriveclubPC::Profiler::Cost::Download};
+    const u64 diag_start =
+        DriveclubPC::DiagTables::Active() ? DriveclubPC::Profiler::NowNs() : 0;
+    if (prefetch) {
+        // driveclub-pc: the synchronous path (command processor faults, offload fallback) took a
+        // window that is read back every frame; prefetch it after its next GPU write as well.
+        hot_windows[Common::AlignDown(device_addr, READBACK_WINDOW_SIZE)] = NowNs();
+    }
     DownloadCopies copies;
     const VAddr arena_base = arena->cpu_addr;
     u64 total_size_bytes = 0;
@@ -330,6 +342,10 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     if (readback_offload) {
         std::scoped_lock lk{readback_mutex};
         std::erase(inflight_downloads, std::pair<VAddr, u64>{device_addr, size});
+    }
+    if (diag_start) {
+        DriveclubPC::DiagTables::NoteDownload(device_addr, total_size_bytes,
+                                              DriveclubPC::Profiler::NowNs() - diag_start);
     }
 }
 
@@ -766,6 +782,8 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         .memoryTypeIndex = arena_memory_type_index,
     };
     const auto device_memory = Vulkan::Check(instance.GetDevice().allocateMemory(alloc_info));
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ResidentBinds);
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ResidentKb, alloc_info.allocationSize >> 10);
 
     boost::container::small_vector<vk::BufferCopy, 8> copies;
     const auto staging =
@@ -924,6 +942,7 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     };
 
     info.AddWait(signal_sema, signal_tick);
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::SparseSubmits);
     auto submit_result = instance.GetGraphicsQueue().bindSparse(sparse_info);
     ASSERT_MSG(submit_result != vk::Result::eErrorDeviceLost, "Device lost during submit");
 

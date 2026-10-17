@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <set>
+#include <tuple>
+#include <mutex>
+#include <cstdlib>
 #include <algorithm>
+#include <chrono>
 #include <bit>
 #include <cstring>
 #include <limits>
@@ -13,6 +18,8 @@
 #include "common/debug.h"
 #include "common/div_ceil.h"
 #include "common/rdtsc.h"
+#include "driveclub/diag_tables.h"
+#include "driveclub/frame_profiler.h"
 #include "common/scope_exit.h"
 #include "core/emulator_settings.h"
 #include "core/memory.h"
@@ -30,6 +37,19 @@
 #include "video_core/texture_cache/tile_manager.h"
 
 namespace VideoCore {
+
+namespace {
+// driveclub-pc: image churn counters (frame profiler) and table (DiagTables).
+void NoteImageEvent(u32 site, const ImageInfo& info) {
+    DriveclubPC::Profiler::AddEvent(site == 255 ? DriveclubPC::Profiler::Event::ImageDeletes
+                                                : DriveclubPC::Profiler::Event::ImageCreates);
+    if (DriveclubPC::DiagTables::Active()) {
+        DriveclubPC::DiagTables::NoteImage(site, info.guest_address, info.size.width,
+                                           info.size.height, static_cast<u32>(info.pixel_format),
+                                           static_cast<u32>(info.tile_mode), info.guest_size);
+    }
+}
+} // namespace
 
 static constexpr u32 MAX_IMAGES = std::numeric_limits<u16>::max();
 static constexpr u32 MAX_IMAGE_VIEWS = std::numeric_limits<u16>::max();
@@ -352,6 +372,7 @@ void TextureCache::InvalidateMemoryFromGPU(VAddr address, size_t max_size) {
 }
 
 void TextureCache::UnmapMemory(VAddr cpu_addr, size_t size) {
+    ReleaseParkedAliases(cpu_addr, size);
     SmallVector<ImageId, 16> deleted_images;
     ForEachImageInRegion(cpu_addr, size, [&](ImageId id, Image&) { deleted_images.push_back(id); });
     for (const ImageId id : deleted_images) {
@@ -409,7 +430,17 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         auto new_info = requested_info;
         new_info.resources = std::max(requested_info.resources, cache_image.info.resources);
         new_info.UpdateSize();
-        const auto new_image_id = slot_images.Insert(instance, runtime, slot_image_views, new_info);
+        const bool park = DepthAliasParking();
+        ImageId new_image_id = park ? TakeParkedAlias(new_info) : ImageId{};
+        if (new_image_id) {
+            // A parked alias starts over like a new image; its Vulkan layout state stays valid.
+            slot_images[new_image_id].flags = ImageFlagBits::Dirty;
+            slot_images[new_image_id].RenewIdentity();
+            slot_images[new_image_id].MarkFastStateDirty();
+        } else {
+            new_image_id = slot_images.Insert(instance, runtime, slot_image_views, new_info);
+            NoteImageEvent(0, new_info);
+        }
         RegisterImage(new_image_id);
 
         // Inherit image usage
@@ -425,8 +456,12 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         new_image.info.meta_info.htile_clear_mask = 0;
         runtime.CopyColorAndDepth(&cache_image, &new_image);
 
-        // Free the cache image.
-        FreeImage(cache_image_id);
+        // Free (or park) the cache image.
+        if (park) {
+            ParkAlias(cache_image_id);
+        } else {
+            FreeImage(cache_image_id);
+        }
         return new_image_id;
     }
 
@@ -671,6 +706,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 
 ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
     const auto new_image_id = slot_images.Insert(instance, runtime, slot_image_views, info);
+    NoteImageEvent(1, info);
     RegisterImage(new_image_id);
 
     auto& src_image = slot_images[image_id];
@@ -1138,6 +1174,7 @@ ImageId TextureCache::FindImageSlow(ImageDesc& desc, bool exact_fmt, ImageId ima
     // Create and register a new image
     if (!image_id) {
         image_id = slot_images.Insert(instance, runtime, slot_image_views, info);
+        NoteImageEvent(2, info);
         RegisterImage(image_id);
     }
     return image_id;
@@ -1414,6 +1451,7 @@ void TextureCache::AssociateStencil(ImageId depth_id, const ImageInfo& depth_inf
         info.guest_size = depth_info.stencil_size;
         info.size = depth_info.size;
         stencil_id = slot_images.Insert(instance, runtime, slot_image_views, info);
+        NoteImageEvent(3, info);
         RegisterImage(stencil_id);
     }
     Image& stencil_image = slot_images[stencil_id];
@@ -1492,6 +1530,8 @@ void TextureCache::RefreshImage(Image& image) {
         copy.bufferOffset += offset;
     }
 
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageUploads);
+    DriveclubPC::Profiler::AddEvent(DriveclubPC::Profiler::Event::ImageUploadKb, image.info.guest_size >> 10);
     runtime.UploadImage(&image, buffer, image_copies);
 }
 
@@ -1667,6 +1707,27 @@ void TextureCache::RegisterImage(ImageId image_id) {
     image_lru_cache.Insert(image, gc_tick);
     const auto& info = image.info;
     ASSERT_MSG((info.guest_address & 0xff) == 0, "Trying to register an unaligned image");
+    {
+        // driveclub-pc: DCPC_IMAGE_LOG=1 lists each distinct image shape once (frame map for
+        // the render-resolution work).
+        static const bool log_images = [] {
+            const char* env = std::getenv("DCPC_IMAGE_LOG");
+            return env && env[0] == '1';
+        }();
+        if (log_images && info.size.width >= 256 && info.size.height >= 128) {
+            static std::mutex m;
+            static std::set<std::tuple<u32, u32, u32, u32>> seen;
+            std::scoped_lock lk{m};
+            if (seen.emplace(info.size.width, info.size.height, static_cast<u32>(info.pixel_format),
+                             info.props.is_depth)
+                    .second) {
+                LOG_INFO(Render, "driveclub-pc: image {}x{} {} depth={} tiled={} addr={:#x}",
+                         info.size.width, info.size.height, vk::to_string(info.pixel_format),
+                         static_cast<u32>(info.props.is_depth),
+                         static_cast<u32>(info.props.is_tiled), info.guest_address);
+            }
+        }
+    }
     // The record must exist before the id is reachable through the page table,
     // which unlocked readers walk.
     AddrFilterOf(image_id.index) = AddrFilter{
@@ -1886,6 +1947,17 @@ void TextureCache::GarbageCollectImages() {
     if (instance.CanReportMemoryUsage()) {
         total_used_memory = instance.GetDeviceMemoryUsage();
     }
+    // driveclub-pc: DCPC_GC_BUDGET_MB=<n> lowers the collector's thresholds (trigger at n/2,
+    // pressure at n, critical at 1.25 n) to test it under memory pressure.
+    static const u64 gc_budget = [] {
+        const char* env = std::getenv("DCPC_GC_BUDGET_MB");
+        return env ? static_cast<u64>(std::strtoull(env, nullptr, 10)) << 20 : u64{0};
+    }();
+    if (gc_budget != 0) {
+        trigger_gc_memory = gc_budget / 2;
+        pressure_gc_memory = gc_budget;
+        critical_gc_memory = gc_budget + gc_budget / 4;
+    }
     if (total_used_memory < trigger_gc_memory) {
         return;
     }
@@ -1903,6 +1975,9 @@ void TextureCache::GarbageCollectImages() {
     bool aggresive = false;
     u64 ticks_to_destroy = 0;
     size_t num_deletions = 0;
+    u32 gc_visits = 0;
+    u64 gc_freed = 0;
+    u64 gc_skipped = 0;
 
     const auto configure = [&](bool allow_aggressive) {
         pressured = total_used_memory >= pressure_gc_memory;
@@ -1927,16 +2002,33 @@ void TextureCache::GarbageCollectImages() {
         if (num_deletions == 0) {
             return true;
         }
-        --num_deletions;
+        // driveclub-pc (bloodborne_pc 0.3 / iss_pc 520b235): an image that cannot be freed
+        // now (a GPU-written tiled image, or one that needs a download while there is no
+        // memory pressure) used to cost a deletion and stay at the front of the queue. Once
+        // the oldest images were all of that kind, every pass spent its budget on them and
+        // freed nothing, so texture memory only grew. It now moves to the back of the queue
+        // for free, and a pass looks at no more than 256 images. DCPC_GC_SKIP_FIX=0 reverts.
         const bool download = image.SafeToDownload();
         const bool tiled = image.info.IsTiled();
-        if (tiled && download) {
-            // This is a workaround for now. We can't handle non-linear image downloads.
-            return false;
+        const bool cannot_free = (tiled && download) || (download && !pressured);
+        if (gc_skip_fix_) {
+            if (++gc_visits > 256) {
+                return true;
+            }
+            if (cannot_free) {
+                image_lru_cache.Touch(image, gc_tick);
+                ++gc_skipped;
+                return false;
+            }
+            --num_deletions;
+        } else {
+            --num_deletions;
+            if (cannot_free) {
+                // This is a workaround for now. We can't handle non-linear image downloads.
+                return false;
+            }
         }
-        if (download && !pressured) {
-            return false;
-        }
+        ++gc_freed;
         const auto image_id = slot_images.GetSlotId(image);
         if (download) {
             DownloadImageMemory(image_id);
@@ -1959,12 +2051,29 @@ void TextureCache::GarbageCollectImages() {
 
     // Try to remove anything old enough and not high priority.
     configure(false);
+    const bool was_pressured = pressured;
     image_lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
 
     if (total_used_memory >= critical_gc_memory) {
         // If we are still over the critical limit, run an aggressive GC
         configure(true);
+        gc_visits = 0;
         image_lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
+    }
+    // driveclub-pc: under memory pressure, report what the collector achieved (every 10 s).
+    gc_pressure_freed_ += was_pressured ? gc_freed : 0;
+    gc_pressure_skipped_ += was_pressured ? gc_skipped : 0;
+    gc_pressure_passes_ += was_pressured ? 1 : 0;
+    if (was_pressured) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - gc_last_report_ >= std::chrono::seconds(10)) {
+            LOG_INFO(Render, "Texture GC under pressure: {} MiB used (pressure {} MiB), {} passes, "
+                             "{} images freed, {} moved back",
+                     total_used_memory >> 20, pressure_gc_memory >> 20, gc_pressure_passes_,
+                     gc_pressure_freed_, gc_pressure_skipped_);
+            gc_last_report_ = now;
+            gc_pressure_freed_ = gc_pressure_skipped_ = gc_pressure_passes_ = 0;
+        }
     }
     // Per-pass worst case: a per300f total cannot tell an amortised pass from a
     // one-off sweep of the whole live set after a long stretch below the trigger.
@@ -2018,6 +2127,92 @@ void TextureCache::GarbageCollectSamplers() {
     }
 }
 
+bool TextureCache::DepthAliasParking() {
+    static const int mode = [] {
+        const char* ab = std::getenv("DCPC_DEPTH_ALIAS_AB");
+        if (ab && ab[0] == '1') {
+            LOG_INFO(Render, "driveclub-pc: depth alias parking alternates every 20 s "
+                             "(profiler phase bit 1 = on)");
+            return 2;
+        }
+        const char* on = std::getenv("DCPC_DEPTH_ALIAS");
+        return on && on[0] == '1' ? 1 : 0;
+    }();
+    bool on = mode == 1;
+    if (mode == 2) {
+        on = ((std::chrono::steady_clock::now().time_since_epoch() / std::chrono::seconds(20)) &
+              1) == 0;
+    }
+    if (static_cast<int>(on) != depth_alias_state_) {
+        depth_alias_state_ = on;
+        if (mode == 2) {
+            DriveclubPC::Profiler::SetPhaseBit(1, on);
+        }
+        if (!on) {
+            ReleaseParkedAliases(0, ~u64{0});
+        }
+    }
+    return on;
+}
+
+ImageId TextureCache::TakeParkedAlias(const ImageInfo& info) {
+    std::scoped_lock lk{parked_aliases_mutex_};
+    const auto it = parked_aliases_.find(info.guest_address);
+    if (it == parked_aliases_.end()) {
+        return {};
+    }
+    const ImageId id = it->second;
+    parked_aliases_.erase(it);
+    const ImageInfo& parked = slot_images[id].info;
+    const bool match =
+        parked.pixel_format == info.pixel_format && parked.type == info.type &&
+        parked.size.width == info.size.width && parked.size.height == info.size.height &&
+        parked.size.depth == info.size.depth && parked.resources.levels == info.resources.levels &&
+        parked.resources.layers == info.resources.layers &&
+        parked.num_samples == info.num_samples && parked.guest_size == info.guest_size &&
+        parked.tile_mode == info.tile_mode && parked.props.is_depth == info.props.is_depth &&
+        parked.props.has_stencil == info.props.has_stencil;
+    if (!match) {
+        DeleteImage(id);
+        return {};
+    }
+    return id;
+}
+
+void TextureCache::ParkAlias(ImageId image_id) {
+    {
+        std::scoped_lock lk{slot_images[image_id].mutex};
+        UntrackImage(image_id);
+    }
+    UnregisterImage(image_id);
+    {
+        std::unique_lock lk{download_images_mutex};
+        download_images.erase(image_id);
+    }
+    PhotoReadback::Forget(image_id);
+    std::scoped_lock lk{parked_aliases_mutex_};
+    auto& slot = parked_aliases_[slot_images[image_id].info.guest_address];
+    if (slot && slot != image_id) {
+        DeleteImage(slot);
+    }
+    slot = image_id;
+}
+
+void TextureCache::ReleaseParkedAliases(VAddr address, u64 size) {
+    std::scoped_lock lk{parked_aliases_mutex_};
+    for (auto it = parked_aliases_.begin(); it != parked_aliases_.end();) {
+        const Image& image = slot_images[it->second];
+        const VAddr begin = image.info.guest_address;
+        const VAddr end = begin + image.info.guest_size;
+        if (begin < address + size && address < end) {
+            DeleteImage(it->second);
+            it = parked_aliases_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void TextureCache::RunGarbageCollector() {
     GarbageCollectImages();
     GarbageCollectSamplers();
@@ -2043,6 +2238,7 @@ u32 TextureCache::MemoVictim(const FindImageMemoEntry* set, u32 ways) const {
 
 void TextureCache::DeleteImage(ImageId image_id) {
     Image& image = slot_images[image_id];
+    NoteImageEvent(255, image.info);
     ASSERT_MSG(image.IsUntracked(), "Image was not untracked");
     ASSERT_MSG(False(image.flags & ImageFlagBits::Registered), "Image was not unregistered");
 

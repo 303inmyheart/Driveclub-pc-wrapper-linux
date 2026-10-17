@@ -4,11 +4,14 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <type_traits>
+#include <unordered_map>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
@@ -740,6 +743,18 @@ private:
     void GarbageCollectImages();
     void GarbageCollectSamplers();
 
+    // driveclub-pc: the game uses some surfaces as D32 depth and as R32F colour in every frame;
+    // ResolveDepthOverlap recreated the other alias each time (create + delete per switch).
+    // DCPC_DEPTH_ALIAS=1 parks the replaced image and reuses it on the next switch (the contents
+    // are still copied); DCPC_DEPTH_ALIAS_AB=1 alternates every 20 s (profiler phase bit 1).
+    bool DepthAliasParking();
+    ImageId TakeParkedAlias(const ImageInfo& info);
+    void ParkAlias(ImageId image_id);
+    void ReleaseParkedAliases(VAddr address, u64 size);
+    std::mutex parked_aliases_mutex_;
+    std::unordered_map<VAddr, ImageId> parked_aliases_;
+    int depth_alias_state_ = -1;
+
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
     Vulkan::Runtime& runtime;
@@ -766,7 +781,17 @@ private:
     Common::LRUCache<Image> image_lru_cache;
     // Lazy-touch GC-walk accounting; only written with lru_lazy_touch latched on.
     u64 lru_lazy_gc_runs_{};
-    u64 lru_lazy_hard_{};     // passes configured pressured or aggressive
+    u64 lru_lazy_hard_{}; // passes configured pressured or aggressive
+    // driveclub-pc: images the collector cannot free move to the back of the queue
+    // (GarbageCollectImages); DCPC_GC_SKIP_FIX=0 restores the old behaviour.
+    bool gc_skip_fix_ = [] {
+        const char* env = std::getenv("DCPC_GC_SKIP_FIX");
+        return env == nullptr || std::atoi(env) != 0;
+    }();
+    u64 gc_pressure_freed_{};
+    u64 gc_pressure_skipped_{};
+    u64 gc_pressure_passes_{};
+    std::chrono::steady_clock::time_point gc_last_report_{};
     u64 lru_lazy_visits_{};   // clean_up calls
     u64 lru_lazy_maxvisit_{}; // most clean_up calls in one GarbageCollectImages pass
     u64 lru_lazy_relinks_{};
@@ -839,6 +864,14 @@ private:
     // bit proves the page table walk would visit nothing. Always maintained,
     // so the probe can be audited with the filter off.
     static constexpr u32 CoverGranuleBits = 16;
+
+public:
+    /// driveclub-pc: whether any image may cover the range (conservative, 64 KiB granules).
+    bool MayCoverImage(VAddr addr, size_t size) const noexcept {
+        return CoverAny(addr, size);
+    }
+
+private:
     static constexpr size_t CoverWords = size_t{1} << (40 - CoverGranuleBits - 6);
     static constexpr u64 CoverLastGranule = (u64{CoverWords} << 6) - 1;
     bool CoverAny(VAddr addr, size_t size) const noexcept {
