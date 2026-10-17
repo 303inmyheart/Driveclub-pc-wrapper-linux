@@ -211,8 +211,17 @@ void Apply(VAddr base, u64 size) {
         h > 4320) {
         return;
     }
+    // DCPC_RENDER_RES_SITES=video: only the video-out size (eboot+0x754c19), as in the
+    // widescreen patch this is based on (widescreen.h); default all sites.
+    const char* sites_env = std::getenv("DCPC_RENDER_RES_SITES");
+    const bool video_only = sites_env && std::strcmp(sites_env, "video") == 0;
     u32 patched = 0;
+    u32 considered = 0;
     for (const auto& site : kSites) {
+        if (video_only && site.addr != 0x754c19 && site.addr != 0x754c1f) {
+            continue;
+        }
+        ++considered;
         if (site.kind >= Kind::IntPair) {
             if (site.addr + 16 <= size && PatchPair(base, site, w, h, false)) {
                 ++patched;
@@ -246,7 +255,7 @@ void Apply(VAddr base, u64 size) {
         }
     }
     LOG_INFO(Loader, "driveclub-pc: render size {}x{}: {} of {} sites patched", w, h, patched,
-             kSites.size());
+             considered);
     if (const char* data = std::getenv("DCPC_RENDER_RES_DATA"); data && data[0] == '1') {
         u32 data_patched = 0;
         for (const auto& site : kDataSites) {

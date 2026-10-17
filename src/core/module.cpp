@@ -4,6 +4,7 @@
 #include <fmt/format.h>
 #include "driveclub/fps_unlock.h"
 #include "driveclub/render_res.h"
+#include "driveclub/widescreen.h"
 #include "common/alignment.h"
 #include "common/arch.h"
 #include "common/assert.h"
@@ -292,6 +293,8 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
             MemoryPatcher::OnGameLoaded();
             // driveclub-pc: experimental render size (DCPC_RENDER_RES).
             DriveclubPC::RenderRes::Apply(base_virtual_addr, base_size);
+            // driveclub-pc: ultrawide aspect, FOV and scene size (DCPC_WIDESCREEN).
+            DriveclubPC::Widescreen::Apply(base_virtual_addr, base_size);
             // driveclub-pc: 60 FPS unlock for the unmodified v1.28 eboot (DCPC_FPS_UNLOCK).
             DriveclubPC::FpsUnlock::Apply(base_virtual_addr, base_size);
         }

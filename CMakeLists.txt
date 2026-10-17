@@ -1354,6 +1354,8 @@ add_executable(shadps4
     src/driveclub/fps_unlock.h
     src/driveclub/render_res.cpp
     src/driveclub/render_res.h
+    src/driveclub/widescreen.cpp
+    src/driveclub/widescreen.h
     src/driveclub/autopilot.h
     src/driveclub/launcher.cpp
     src/driveclub/launcher.h
