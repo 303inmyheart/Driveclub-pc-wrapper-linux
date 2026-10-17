@@ -21,8 +21,9 @@ namespace DriveclubPC::AsyncPipelines {
 namespace {
 
 bool ReadEnabled() {
+    // driveclub-pc: on by default since 0.2; DCPC_ASYNC_PIPELINES=0 turns it off.
     const char* v = std::getenv("DCPC_ASYNC_PIPELINES");
-    return v && v[0] == '1';
+    return !(v && v[0] == '0');
 }
 
 u32 ReadThreads() {

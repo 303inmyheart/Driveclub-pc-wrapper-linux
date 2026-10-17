@@ -947,9 +947,10 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                              AmdGpu::Liverpool* liverpool_, u32 sparse_page_shift)
     : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_},
       desc_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes}, layouts{instance} {
-    if (const char* env = std::getenv("DCPC_ASYNC_SHADERS");
-        env && (env[0] == '1' || env[0] == 'f' || env[0] == 'v')) {
-        // 1: vertex and fragment, f / v: only that stage (diagnostic).
+    // driveclub-pc: on by default since 0.2. DCPC_ASYNC_SHADERS=0 turns it off; f / v restrict
+    // it to fragment or vertex shaders (diagnostic).
+    if (const char* env_raw = std::getenv("DCPC_ASYNC_SHADERS"); !(env_raw && env_raw[0] == '0')) {
+        const char* env = env_raw ? env_raw : "1";
         async_shader_vs = env[0] != 'f';
         async_shader_fs = env[0] != 'v';
         async_shaders = !EmulatorSettings.IsPatchShaders() && !EmulatorSettings.IsDumpShaders() &&
