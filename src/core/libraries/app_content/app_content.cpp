@@ -63,7 +63,7 @@ int PS4_SYSV_ABI sceAppContentAddcontMount(u32 service_label,
                                            OrbisAppContentMountPoint* mount_point) {
     LOG_INFO(Lib_AppContent, "called");
 
-    const auto& addon_path = EmulatorSettings.GetAddonInstallDir() / title_id;
+    const auto addon_path = EmulatorSettings.GetAddonContentDir(title_id);
     auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
 
     // Determine which loaded additional content this entitlement label is for.
@@ -112,6 +112,7 @@ int PS4_SYSV_ABI sceAppContentAddcontMount(u32 service_label,
         auto content_id = dlc_params->GetString("CONTENT_ID");
         if (!category.has_value() || strncmp(category.value().data(), "ac", 2) != 0 ||
             !content_id.has_value() ||
+            content_id.value().find(fmt::format("-{}_", title_id)) == std::string::npos ||
             content_id.value().length() <= ORBIS_APP_CONTENT_ENTITLEMENT_LABEL_OFFSET) {
             // This content fails the error checks performed in sceAppContentInitialize.
             mnt->Unmount(mount_point->data);
@@ -308,13 +309,12 @@ int PS4_SYSV_ABI sceAppContentInitialize(const OrbisAppContentInitParam* initPar
     is_initialized = true;
     auto* param_sfo = Common::Singleton<PSF>::Instance();
 
-    const auto addons_dir = EmulatorSettings.GetAddonInstallDir();
     if (const auto value = param_sfo->GetString("TITLE_ID"); value.has_value()) {
         title_id = *value;
     } else {
         UNREACHABLE_MSG("Failed to get TITLE_ID");
     }
-    const auto addon_path = addons_dir / title_id;
+    const auto addon_path = EmulatorSettings.GetAddonContentDir(title_id);
     if (std::filesystem::exists(addon_path)) {
         for (const auto& entry : std::filesystem::directory_iterator(addon_path)) {
             if (!entry.is_directory() && entry.path().extension() != ".zar") {
@@ -354,6 +354,12 @@ int PS4_SYSV_ABI sceAppContentInitialize(const OrbisAppContentInitParam* initPar
             auto content_id = dlc_params->GetString("CONTENT_ID");
             if (!content_id.has_value()) {
                 LOG_WARNING(Lib_AppContent, "Additonal content {} param.sfo is missing CONTENT_ID",
+                            entry.path().filename().string());
+                continue;
+            }
+
+            if (content_id.value().find(fmt::format("-{}_", title_id)) == std::string::npos) {
+                LOG_WARNING(Lib_AppContent, "Additional content {} belongs to another title",
                             entry.path().filename().string());
                 continue;
             }

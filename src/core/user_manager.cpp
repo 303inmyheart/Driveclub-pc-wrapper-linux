@@ -98,6 +98,23 @@ enum class TransferOption : s32 {
     SdlCancelled = -1,
 };
 TransferOption AskMigrationOption() {
+    // Fresh installations have nothing to migrate. Do not block the launcher with a
+    // migration dialog that incorrectly claims old saves were found.
+    const auto root = Common::FS::GetUserPath(Common::FS::PathType::UserDir);
+    std::error_code ec;
+    const auto saves = root / "savedata" / "1";
+    const bool has_saves = fs::is_directory(saves, ec) && !fs::is_empty(saves, ec) && !ec;
+    bool has_trophies = false;
+    for (const auto& game : fs::directory_iterator(root / "game_data", ec)) {
+        const auto trophies = game.path() / "TrophyFiles";
+        if (fs::is_directory(trophies, ec) && !fs::is_empty(trophies, ec) && !ec) {
+            has_trophies = true;
+            break;
+        }
+    }
+    if (!has_saves && !has_trophies) {
+        return TransferOption::Nothing;
+    }
     TransferOption user_choice = TransferOption::Nothing;
 #ifndef _WIN32
     SDL_MessageBoxButtonData btns[4]

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.driveclub_pc</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-or-later</project_license>
+  <name>Driveclub-PC</name>
+  <summary>Run your own Driveclub PS4 dump on Linux</summary>
+  <description>
+    <p>A shadPS4-based emulator tuned for Driveclub CUSA00093 with update 1.28.
+    Includes a settings launcher, Vulkan rendering and SDL controller support.
+    Your own game and PS4 firmware dumps are required and are not included.</p>
+    <p>This Linux build is experimental. Gameplay compatibility and performance
+    depend on your hardware, graphics driver and game dump.</p>
+  </description>
+  <launchable type="desktop-id">io.github.driveclub_pc.desktop</launchable>
+  <provides><binary>Driveclub-PC</binary></provides>
+  <url type="homepage">https://github.com/303inmyheart/Driveclub-pc-wrapper</url>
+  <content_rating type="oars-1.1"/>
+</component>

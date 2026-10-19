@@ -18,7 +18,7 @@ namespace DriveclubPC::Launcher {
 
 /// Shows the window if needed and applies the chosen settings. Returns the game folder to
 /// start, or nullopt when the user closed the window. Call after the emulator settings loaded.
-std::optional<std::filesystem::path> Run();
+std::optional<std::filesystem::path> Run(bool force = false);
 
 /// Applies the saved launcher settings that are not part of the per-game config (frame rate,
 /// runtime toggles) when the game folder came from the command line.

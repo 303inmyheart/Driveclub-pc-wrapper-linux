@@ -19,6 +19,15 @@
 #include "driveclub/launcher.h"
 #include "driveclub/widescreen.h"
 
+#ifndef _WIN32
+#include <SDL3/SDL.h>
+#include <ImGuiFileDialog.h>
+#include <imgui.h>
+#include "imgui/big_picture/imgui_impl_sdl3_big_picture.h"
+#include "imgui/big_picture/imgui_impl_sdlrenderer3.h"
+#include "imgui/renderer/font_stack.h"
+#endif
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -144,6 +153,17 @@ std::pair<int, int> DisplaySize() {
     if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmPelsWidth > 0) {
         width = static_cast<int>(mode.dmPelsWidth);
         height = static_cast<int>(mode.dmPelsHeight);
+    }
+#else
+    const bool init_video = !(SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO);
+    if (!init_video || SDL_InitSubSystem(SDL_INIT_VIDEO)) {
+        if (const auto* mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay())) {
+            width = mode->w;
+            height = mode->h;
+        }
+        if (init_video) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        }
     }
 #endif
     return {width, height};
@@ -764,11 +784,13 @@ bool ShowWindow(Settings& s) {
     return ui.play;
 }
 
+#else
+#include "driveclub/launcher_linux.inl"
 #endif
 
 } // namespace
 
-std::optional<fs::path> Run() {
+std::optional<fs::path> Run(bool force) {
     Settings s = Load();
     std::string error;
     const bool game_ok = !s.game_dir.empty() && ResolveAndValidateGame(s.game_dir, error);
@@ -776,7 +798,7 @@ std::optional<fs::path> Run() {
     FirmwareStatus(firmware_ok);
 #ifdef _WIN32
     const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-    if (s.show_launcher || shift || !game_ok || !firmware_ok) {
+    if (s.show_launcher || force || shift || !game_ok || !firmware_ok) {
         const bool play = ShowWindow(s);
         Save(s);
         if (!play) {
@@ -784,11 +806,22 @@ std::optional<fs::path> Run() {
         }
     }
 #else
-    if (!game_ok || !firmware_ok) {
-        ShowError(error.empty() ? std::string("Set game_dir in user/driveclub_pc.ini") : error);
-        return std::nullopt;
+    // The Linux launcher also provides a way to re-open settings after automatic launch.
+    if (s.show_launcher || force || !game_ok || !firmware_ok) {
+        if (!ShowLinuxWindow(s)) {
+            return std::nullopt;
+        }
+        Save(s);
     }
 #endif
+    // Persist and start the discovered base, rather than handing a containing folder to the core.
+    const auto resolved = ResolveAndValidateGame(s.game_dir, error);
+    if (!resolved) {
+        ShowError(error);
+        return std::nullopt;
+    }
+    s.game_dir = resolved->parent_path().string();
+    Save(s);
     WriteGameConfig(s);
     ApplyRuntime(s);
     const auto out = TargetOutput(s);

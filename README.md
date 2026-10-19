@@ -3,6 +3,13 @@ SPDX-License-Identifier: GPL-2.0-or-later
 -->
 # Driveclub-PC
 
+[![Linux AppImage](https://github.com/303inmyheart/Driveclub-pc-wrapper/actions/workflows/linux-appimage.yml/badge.svg)](https://github.com/303inmyheart/Driveclub-pc-wrapper/actions/workflows/linux-appimage.yml)
+
+**Linux port:** native Linux/AppImage work is documented in
+[driveclub-pc/LINUX.md](driveclub-pc/LINUX.md).
+Download the AppImage from the **Artifacts** section of a successful
+[Linux AppImage build](https://github.com/303inmyheart/Driveclub-pc-wrapper/actions/workflows/linux-appimage.yml).
+
 A personal hobby fork of the [shadPS4](https://github.com/shadps4-emu/shadPS4) PS4 emulator, tuned
 to run **Driveclub (CUSA00093, v1.28)** on Windows. It is built on
 [GR2fork](https://github.com/junminlee2004/GR2fork) by junminlee2004.

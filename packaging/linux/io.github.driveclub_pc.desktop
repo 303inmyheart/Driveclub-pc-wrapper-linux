@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Driveclub-PC
+Comment=Play your own Driveclub PS4 dump
+Exec=Driveclub-PC %f
+Icon=driveclub-pc
+Categories=Game;Emulator;
+Terminal=false
+StartupWMClass=Driveclub-PC
+Actions=Settings;
+
+[Desktop Action Settings]
+Name=Settings
+Exec=Driveclub-PC --launcher

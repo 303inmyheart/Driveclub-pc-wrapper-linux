@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <fstream>
+#include <cstring>
+#include <vector>
 
 #include <SDL3/SDL_messagebox.h>
 #include <fmt/format.h>
 
 #include "common/logging/log.h"
+#include "common/content_paths.h"
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
 #include "core/file_format/psf.h"
@@ -22,12 +25,46 @@ namespace DriveclubPC {
 namespace {
 
 std::optional<std::string> ReadSfoString(const std::filesystem::path& folder, std::string_view key) {
-    PSF psf;
-    if (!psf.Open(folder / "sce_sys" / "param.sfo")) {
+    // Discovery can encounter unrelated or incomplete dumps. Read only bounded SFO strings;
+    // the core's general-purpose PSF loader assumes it was given a complete game file.
+    std::ifstream input(folder / "sce_sys" / "param.sfo", std::ios::binary | std::ios::ate);
+    if (!input) {
         return std::nullopt;
     }
-    if (const auto value = psf.GetString(key)) {
-        return std::string(*value);
+    const auto size = input.tellg();
+    if (size < static_cast<std::streamoff>(sizeof(PSFHeader)) || size > 1024 * 1024) {
+        return std::nullopt;
+    }
+    std::vector<char> bytes(static_cast<size_t>(size));
+    input.seekg(0);
+    if (!input.read(bytes.data(), bytes.size())) return std::nullopt;
+    PSFHeader header{};
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    const size_t count = header.index_table_entries;
+    const size_t keys = header.key_table_offset, data = header.data_table_offset;
+    if (header.magic != PSF_MAGIC ||
+        (header.version != PSF_VERSION_1_1 && header.version != PSF_VERSION_1_0) ||
+        count > (bytes.size() - sizeof(header)) / sizeof(PSFRawEntry) ||
+        keys < sizeof(header) + count * sizeof(PSFRawEntry) || keys > data || data > bytes.size()) {
+        return std::nullopt;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        PSFRawEntry entry{};
+        std::memcpy(&entry, bytes.data() + sizeof(header) + i * sizeof(entry), sizeof(entry));
+        const size_t offset = entry.key_offset;
+        if (offset >= data - keys) return std::nullopt;
+        const char* name = bytes.data() + keys + offset;
+        const auto* end = static_cast<const char*>(std::memchr(name, 0, data - keys - offset));
+        if (!end) return std::nullopt;
+        if (std::string_view(name, end - name) != key) continue;
+        const size_t value_offset = entry.data_offset, length = entry.param_len;
+        if (entry.param_fmt.Raw() != static_cast<u16>(PSFEntryFmt::Text) ||
+            value_offset > bytes.size() - data || length > bytes.size() - data - value_offset) {
+            return std::nullopt;
+        }
+        const char* value = bytes.data() + data + value_offset;
+        const auto* value_end = static_cast<const char*>(std::memchr(value, 0, length));
+        return value_end ? std::optional<std::string>(std::string(value, value_end)) : std::nullopt;
     }
     return std::nullopt;
 }
@@ -37,6 +74,7 @@ std::optional<std::string> ReadSfoString(const std::filesystem::path& folder, st
 std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesystem::path& arg,
                                                             std::string& error) {
     std::error_code ec;
+    error.clear();
     std::filesystem::path folder = arg;
     if (std::filesystem::is_regular_file(folder, ec)) {
         folder = folder.parent_path();
@@ -48,6 +86,34 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
     if (const auto base = Core::FileSys::BaseGameFromOverlay(folder)) {
         folder = *base;
     }
+    const auto is_base = [](const std::filesystem::path& candidate) {
+        std::error_code file_error;
+        if (!std::filesystem::is_regular_file(candidate / "eboot.bin", file_error) ||
+            ReadSfoString(candidate, "TITLE_ID") != TitleId) {
+            return false;
+        }
+        const auto category = ReadSfoString(candidate, "CATEGORY");
+        return !category || (*category != "gp" && !category->starts_with("ac"));
+    };
+    if (!is_base(folder)) {
+        const auto search = Common::FS::FindGameDirectories(folder, is_base);
+        if (search.incomplete) {
+            error = "This folder contains too many nested folders. Select a folder closer to Driveclub.";
+            return std::nullopt;
+        }
+        if (search.matches.size() > 1) {
+            error = "Several Driveclub installations were found. Select the one you want:";
+            for (const auto& match : search.matches) error += "\n" + match.string();
+            return std::nullopt;
+        }
+        if (search.matches.empty()) {
+            error = fmt::format("No Driveclub base game ({}) found in this folder or its subfolders:\n{}",
+                                TitleId, folder.string());
+            return std::nullopt;
+        }
+        folder = search.matches.front();
+    }
+    folder = std::filesystem::weakly_canonical(folder, ec);
     const auto eboot = folder / "eboot.bin";
     if (!std::filesystem::is_regular_file(eboot, ec)) {
         error = fmt::format("No eboot.bin in\n{}\n\nSelect the Driveclub base game folder ({}).",
@@ -87,6 +153,27 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
     return eboot;
 }
 
+std::string DescribeAddonFolder(const std::filesystem::path& root) {
+    std::error_code ec;
+    const auto folder = Common::FS::AddonContentPath(root, TitleId);
+    if (!std::filesystem::is_directory(folder, ec)) {
+        return "No DLC folder found (optional). Choose a folder with unpacked DLCs.";
+    }
+    size_t count = 0;
+    std::filesystem::directory_iterator it(folder,
+        std::filesystem::directory_options::skip_permission_denied, ec), end;
+    while (it != end && !ec) {
+        const auto category = ReadSfoString(it->path(), "CATEGORY");
+        const auto content_id = ReadSfoString(it->path(), "CONTENT_ID");
+        if (category && category->starts_with("ac") && content_id &&
+            content_id->find(fmt::format("-{}_", TitleId)) != std::string::npos) {
+            ++count;
+        }
+        it.increment(ec);
+    }
+    return fmt::format("{} matching DLC folder(s) found in {}", count, folder.string());
+}
+
 bool ValidateSysModules(std::string& error) {
     const auto dir = EmulatorSettings.GetSysModulesDir();
     std::error_code ec;
@@ -97,7 +184,7 @@ bool ValidateSysModules(std::string& error) {
     error = fmt::format(
         "PS4 firmware modules were not found in\n{}\n\nDriveclub needs libSceLibcInternal.sprx "
         "and the other system modules from your own PS4 firmware dump. They are not included "
-        "with {}. Copy them into that folder, or set General.sys_modules_dir in user\\config.json.",
+        "with {}. Use Import firmware in the launcher, or set General.sys_modules_dir in config.json.",
         dir.string(), AppName);
     return false;
 }
@@ -149,11 +236,17 @@ void ShowError(std::string_view message) {
 }
 
 std::string UsageText() {
+#ifdef _WIN32
+    constexpr std::string_view executable = "Driveclub-PC.exe";
+#else
+    constexpr std::string_view executable = "Driveclub-PC";
+#endif
     return fmt::format("{} runs the PS4 version of Driveclub ({}, update {}).\n\n"
-                       "Usage: {}.exe <Driveclub base game folder>\n\n"
+                       "Usage: {} <Driveclub base game folder>\n\n"
                        "The update must sit next to it as <folder>-UPDATE or <folder>-patch.\n"
-                       "Settings and saves are kept in the 'user' folder next to the program.",
-                       AppName, TitleId, TargetAppVersion, AppName);
+                       "Settings and saves are kept in:\n{}",
+                       AppName, TitleId, TargetAppVersion, executable,
+                       Common::FS::GetUserPath(Common::FS::PathType::UserDir).string());
 }
 
 } // namespace DriveclubPC

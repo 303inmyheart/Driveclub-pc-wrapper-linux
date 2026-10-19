@@ -1359,6 +1359,7 @@ add_executable(shadps4
     src/driveclub/autopilot.h
     src/driveclub/launcher.cpp
     src/driveclub/launcher.h
+    src/driveclub/launcher_linux.inl
     src/driveclub/frame_rate.cpp
     src/driveclub/frame_rate.h
     src/driveclub/deferred_recording.cpp

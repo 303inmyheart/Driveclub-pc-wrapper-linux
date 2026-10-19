@@ -19,12 +19,16 @@ constexpr std::string_view TargetAppVersion = "01.28";
 constexpr std::string_view AppName = "Driveclub-PC";
 
 // Accepts the base game folder, its update folder (<base>-UPDATE / <base>-patch) or an eboot.bin
-// inside either. Returns the eboot.bin to start, or nullopt with a user-facing message in `error`.
+// inside either, or a containing folder searched recursively. Returns the base eboot.bin;
+// multiple matching installations require a more specific selection.
 std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesystem::path& arg,
                                                             std::string& error);
 
 // Firmware modules are the user's own (never shipped). Driveclub needs libSceLibcInternal.sprx.
 bool ValidateSysModules(std::string& error);
+
+// Describe unpacked DLCs for this title in either an addcont root or a direct DLC container.
+std::string DescribeAddonFolder(const std::filesystem::path& root);
 
 // Writes the Driveclub per-game settings once, when the user has none: the GPU readback settings
 // recommended for the game (Precise/readbacks_mode=2, readback_offload=true), FSR 1 + RCAS, and

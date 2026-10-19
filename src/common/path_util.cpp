@@ -88,6 +88,18 @@ static std::optional<std::filesystem::path> GetBundleParentDirectory() {
 static auto UserPaths = [] {
     // Try the portable user directory first.
     auto user_dir = std::filesystem::current_path() / PORTABLE_DIR;
+#ifdef __linux__
+    // Keep Driveclub data separate from other shadPS4 installations. AppImages are read-only;
+    // their mount point and the shell's working directory must never determine save locations.
+    if (const char* data_dir = getenv("DCPC_USER_DIR"); data_dir && *data_dir) {
+        user_dir = std::filesystem::absolute(data_dir);
+    } else if (const char* xdg = getenv("XDG_DATA_HOME"); xdg && *xdg && fs::path(xdg).is_absolute()) {
+        user_dir = fs::path(xdg) / "driveclub-pc";
+    } else {
+        user_dir = fs::path(getenv("HOME") ? getenv("HOME") : ".") / ".local/share/driveclub-pc";
+    }
+    std::filesystem::create_directories(user_dir);
+#endif
 #ifdef _WIN32
     // driveclub-pc: the user folder always sits next to the executable, so a double-clicked or
     // shortcut-started Driveclub-PC.exe finds its settings and saves regardless of the working dir.
