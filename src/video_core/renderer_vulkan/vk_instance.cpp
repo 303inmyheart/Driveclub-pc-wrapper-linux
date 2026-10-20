@@ -391,6 +391,12 @@ bool Instance::CreateDevice() {
     const auto vk11_features = feature_chain.get<vk::PhysicalDeviceVulkan11Features>();
     vk12_features = feature_chain.get<vk::PhysicalDeviceVulkan12Features>();
     vk13_features = feature_chain.get<vk::PhysicalDeviceVulkan13Features>();
+    // driveclub-pc: record the native width, selected compute width and legal stage mask.
+    LOG_INFO(Render_Vulkan,
+             "driveclub-pc: subgroup default {}, range {}-{}, required stages {:#x}, compute {}",
+             DefaultSubgroupSize(), vk13_props.minSubgroupSize, vk13_props.maxSubgroupSize,
+             static_cast<u32>(static_cast<VkShaderStageFlags>(vk13_props.requiredSubgroupSizeStages)),
+             SubgroupSize());
     vk::StructureChain device_chain = {
         vk::DeviceCreateInfo{
             .queueCreateInfoCount = 1u,

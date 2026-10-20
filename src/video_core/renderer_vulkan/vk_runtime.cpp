@@ -467,7 +467,13 @@ void Runtime::CopyColorAndDepth(VideoCore::Image* src, VideoCore::Image* dst) {
             dst->info.size.width, dst->info.size.height, dst->info.num_samples,
             src->info.pixel_format, dst->info.pixel_format, src->GetImage(), dst->GetImage());
     } else {
-        LOG_WARNING(Render_Vulkan, "Unimplemented depth overlap copy");
+        // driveclub-pc: retain the unresolved copy's actual formats/sample counts for diagnosis.
+        LOG_WARNING(Render_Vulkan,
+                    "Unimplemented depth overlap copy: {}x{} {} samples={} -> {}x{} {} samples={}",
+                    src->info.size.width, src->info.size.height,
+                    vk::to_string(src->info.pixel_format), src->info.num_samples,
+                    dst->info.size.width, dst->info.size.height,
+                    vk::to_string(dst->info.pixel_format), dst->info.num_samples);
     }
 }
 
