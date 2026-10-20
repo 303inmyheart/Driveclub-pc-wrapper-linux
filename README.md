@@ -1,128 +1,138 @@
 <!--
 SPDX-License-Identifier: GPL-2.0-or-later
 -->
-# Driveclub-PC
+# Driveclub-PC — Linux AppImage
 
-[![Linux AppImage](https://github.com/303inmyheart/Driveclub-pc-wrapper/actions/workflows/linux-appimage.yml/badge.svg)](https://github.com/303inmyheart/Driveclub-pc-wrapper/actions/workflows/linux-appimage.yml)
+[![Linux AppImage](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/actions/workflows/linux-appimage.yml/badge.svg)](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/actions/workflows/linux-appimage.yml)
 
-**Linux port:** native Linux/AppImage work is documented in
-[driveclub-pc/LINUX.md](driveclub-pc/LINUX.md).
-Download the AppImage from the **Artifacts** section of a successful
-[Linux AppImage build](https://github.com/303inmyheart/Driveclub-pc-wrapper/actions/workflows/linux-appimage.yml).
+**Linux port created by Codex (OpenAI), at the request of 303inmyheart.**
+This repository is maintained by [303inmyheart](https://github.com/303inmyheart).
+Codex's creator credit applies specifically to the Linux port, native Linux
+launcher adaptation, AppImage packaging and Linux build workflow.
 
-A personal hobby fork of the [shadPS4](https://github.com/shadps4-emu/shadPS4) PS4 emulator, tuned
-to run **Driveclub (CUSA00093, v1.28)** on Windows. It is built on
-[GR2fork](https://github.com/junminlee2004/GR2fork) by junminlee2004.
+**This is a Linux-port fork of [Driveclub-PC by ondrejeder](https://github.com/ondrejeder/Driveclub-pc-wrapper).**
+The original Driveclub wrapper, its game-specific improvements and the underlying
+emulator are the work of their respective upstream authors. This fork focuses on
+bringing that existing work to Linux; it does not claim authorship of the original
+project. Full credit for Driveclub-PC goes to **ondrejeder**, with foundational
+credit to **junminlee2004 / GR2fork** and the **shadPS4 team and contributors**.
 
-**No game data, firmware or Sony code is included.** You need your own dump of Driveclub
-(base game plus the 1.28 update) and the PS4 system modules from your own console.
+The application runs the PS4 version of Driveclub through the bundled emulator
+natively on Linux. Wine and Proton are not required. This does not convert the
+game itself into a native Linux game.
 
-Unofficial, and not affiliated with Sony Interactive Entertainment, Evolution Studios, the
-shadPS4 team or the GR2fork author. Names and trademarks belong to their owners.
+## Download and requirements
 
-## Tested version
+Download the `.AppImage` and its `.sha256` file from
+[GitHub Releases](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/releases).
+Preview releases are intended for local testing.
 
-Only **Driveclub CUSA00093 with update 1.28** has been tested. Other regions or versions may not work.
+- x86_64 Linux with an AVX2-capable CPU (x86-64-v3).
+- Ubuntu 24.04 or a compatible distribution with glibc 2.39 or newer for the published builds.
+- A Vulkan-capable GPU and working graphics drivers.
+- Your own **Driveclub CUSA00093** base-game dump with **update 1.28**, and PS4 system modules from your own console.
 
-## How to use
+**No game data, DLC, firmware or Sony code is included.**
+This is an unofficial project, unaffiliated with Sony Interactive Entertainment,
+Evolution Studios or the upstream emulator developers. Names and trademarks
+belong to their owners.
 
-1. Download the release zip and extract it into its own folder.
-2. Get your dumps ready:
-   - the base game folder (`CUSA00093`), and next to it the 1.28 update folder named
-     `<base folder>-patch` or `<base folder>-UPDATE`;
-   - the PS4 firmware modules (`sys_modules`) from your own console.
-3. Run `Driveclub-PC.exe`. A settings window opens:
+## Run on Linux
 
-| Setting | What to choose |
-|---|---|
-| Game folder | the base game folder (`CUSA00093`) |
-| Firmware | your `sys_modules` folder. **Import...** copies it into `user\sys_modules`, so the original can move later |
-| Frame rate | 30 / **60 (recommended)** / 120 (experimental, depends on scene and CPU temperature) |
-| Display / Window size | borderless fullscreen or window; the window size only applies in windowed mode (fullscreen always covers the display). Includes the ultrawide sizes 2560x1080, 3440x1440 and 5120x1440 |
-| Render resolution | **1080p (native)** / 1440p / 2160p: the number of lines the game renders (the engine's own scaling; extra video memory is set up automatically). The width follows the aspect ratio of the display (fullscreen) or window, see *Ultrawide* below. 1440p costs about 10–15 % FPS; 2160p is very demanding |
-| Upscaling / Sharpening | AMD FSR 1 or bilinear; RCAS sharpening off / normal / strong |
-| Anisotropic filter | 16x by default; Off keeps the game's own setting |
-| Anti-aliasing | Off / **FXAA (default)** / SMAA 1x High |
-| Prefer performance cores | on by default; keeps the busiest threads on P-cores of hybrid Intel CPUs |
-| Compile shaders in the background | on by default: new shaders and pipelines are built off the main thread, so first-time content does not freeze the game (an object may appear a few frames late). Turn off if you see graphics errors |
-| GPU readbacks | **Precise (default)**. Relaxed is faster but causes shadow and vegetation glitches; Off makes the 3D world nearly black |
-| Classic PS4 frame pacing | fallback: only turn it on if game speed feels wrong |
-| Show this window at start | if turned off, the game starts directly; hold **Shift** while launching to open the window again |
+In the download directory, verify the checksum, make the AppImage executable,
+and run it (replace `<build>` with the downloaded filename's version):
 
-4. Press **Play**. Before the game boots, the launcher checks the folder, the title ID, the update
-   version and the firmware, and explains any problem it finds.
-
-The game's own clock runs in real time: race times are correct at 120 FPS as well, and physics don't speed up.
-
-**Ultrawide:** on a display or window wider than 16:9 the game renders a native wide image: the
-scene itself is rendered at the wide size (e.g. 3440x1440 at 1440p, nothing is stretched) with a
-wider horizontal field of view (Hor+). The HUD stays in the centred 16:9 area and videos are
-pillarboxed. 2160p on an ultrawide display is reduced to 1440p (the game's memory budget).
-Displays narrower than 16:9 (e.g. 16:10) keep a 16:9 picture with black bars.
-Tested in scripted races and screenshots, not yet on a real ultrawide monitor.
-
-**60 FPS with an unmodified 1.28 executable:** the game no longer runs too fast; the fix is applied
-in memory and leaves already-modified executables alone.
-
-**Data:** settings, saves, shader cache and logs are all kept in the `user` folder next to the
-executable. Keep that folder when you update to a new release. The log of the last run is
-`user\log\shad_log.txt`.
-
-**Controls:** gamepad through SDL, the same as shadPS4/GR2fork.
-
-## What it changes
-
-Compared with GR2fork, this fork adds a Driveclub launcher with settings, 30/60/120 FPS targets,
-FXAA/SMAA and anisotropic filtering, stability fixes, and CPU-side speedups of the emulated GPU
-command processor. Full list: [driveclub-pc/CHANGES.md](driveclub-pc/CHANGES.md).
-
-## Performance
-
-Test machine: ASUS ROG Zephyrus G16 (GU605CR), Intel Core Ultra 9 285H, NVIDIA GeForce RTX 5070 Ti
-Laptop GPU, 32 GB RAM, Windows 11. Same race, same game settings.
-
-| | GR2fork (shadPS4) | Driveclub-PC |
-|---|---|---|
-| 60 FPS target, average | ~51 FPS | ~59.6 FPS |
-| 60 FPS target, frame pacing | 12–19 % of frames drop to 33 ms (30 FPS) | stable 60 |
-| 120 FPS target (played by hand) | dips to ~35 FPS | 75–90 FPS |
-| 120 FPS target, 2560x1440 render (v0.2, played by hand) | – | 65–80 FPS |
-| 120 FPS target, ultrawide (v0.2.1, scripted races) | – | 2560x1080: 84, 3440x1440: 70, 5120x1440: 67 FPS |
-
-The 60 FPS rows come from scripted test races; the 120 FPS row comes from races played by hand.
-Results vary by up to ~15 % with laptop temperature. At 120 FPS the limit is the emulator's
-CPU-side GPU command processing, not the graphics card (27–35 % busy).
-
-## Building (Windows)
-
-Requires Visual Studio 2022 Build Tools with **clang-cl**, CMake, Ninja and Git. Run from an
-"x64 Native Tools" developer prompt:
-
-```powershell
-git clone --recursive https://github.com/ondrejeder/Driveclub-pc-wrapper.git
-cd Driveclub-pc-wrapper
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
-  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE=ON
-cmake --build build --parallel
+```sh
+sha256sum --check Driveclub-PC-<build>-x86_64.AppImage.sha256
+chmod +x Driveclub-PC-<build>-x86_64.AppImage
+./Driveclub-PC-<build>-x86_64.AppImage
 ```
 
-Release builds also use profile-guided optimisation, which adds about 10 %.
+In the launcher:
 
-## Credits
+1. Choose the **game folder**. You can select the base-game folder directly or a
+   containing folder such as `Drive Club`; subfolders are searched recursively.
+   If several installations are found, select a more specific folder.
+2. Keep update **1.28** next to the resolved base-game folder, named
+   `<base folder>-patch` or `<base folder>-UPDATE`.
+3. Use **Import firmware...** to import `.sprx` system modules from your console dump.
+4. Optionally select your own **DLC folder**. Both an `addcont` root containing
+   `CUSA00093/<DLC>/sce_sys/param.sfo` and a folder directly containing
+   `<DLC>/sce_sys/param.sfo` are supported. DLC stays in the chosen location;
+   PKG files must be unpacked first.
+5. Choose graphics, display and frame-rate settings, then press **Play**.
 
-- [shadPS4](https://github.com/shadps4-emu/shadPS4): the shadPS4 Emulator Project and contributors.
-  Almost all of the code here is theirs.
-- [GR2fork](https://github.com/junminlee2004/GR2fork) by junminlee2004: the fork this project starts
-  from (see [README-GR2fork.md](README-GR2fork.md)).
-- [Driveclub_Widescreen](https://github.com/rafidwayne/Driveclub_Widescreen) by rafidwayne
-  (GPL-2.0-or-later): the aspect ratio, video-out width and FOV values the ultrawide support starts from.
-- [SMAA](https://github.com/iryoku/smaa) by Jorge Jimenez et al., MIT licence
-  ([driveclub-pc/SMAA-LICENSE.txt](driveclub-pc/SMAA-LICENSE.txt)).
+Example game layout:
+
+```text
+Drive Club/
+├── CUSA00093/
+│   ├── eboot.bin
+│   └── sce_sys/param.sfo
+└── CUSA00093-patch/
+    ├── eboot.bin
+    └── sce_sys/param.sfo
+```
+
+To reopen settings after disabling the startup window, launch with `--launcher`.
+If FUSE is unavailable, use `APPIMAGE_EXTRACT_AND_RUN=1` before the AppImage command.
+Gamepad input uses SDL, inherited from shadPS4/GR2fork.
+
+## Settings and saved data
+
+Linux settings, saves, shader caches, imported firmware and logs are stored in
+`$XDG_DATA_HOME/driveclub-pc`, normally `~/.local/share/driveclub-pc`.
+They survive replacing the AppImage. The launcher shows the active data directory.
+To choose another location:
+
+```sh
+DCPC_USER_DIR="/path/to/driveclub-data" ./Driveclub-PC-<build>-x86_64.AppImage
+```
+
+Game and DLC directories are selected independently in the launcher.
+The last-run log is inside the data directory at `log/shad_log.txt`.
+
+## Scope and validation
+
+This fork adds the Linux launcher adaptation, recursive game discovery,
+configurable external DLC paths, Linux data-directory handling, AppImage packaging
+and GitHub Actions builds. The Driveclub-specific emulation, rendering and timing
+improvements originate upstream; see the
+[original README](README-UPSTREAM.md) and [upstream change list](driveclub-pc/CHANGES.md).
+The original README is preserved as historical upstream documentation and describes
+the Windows version, including its Windows performance results.
+
+The Linux build targets **CUSA00093 with update 1.28**. Successful CI checks cover
+content-path regression tests, desktop metadata, packaged `--help` startup and
+SHA-256 checksums. **Actual Linux gameplay, DLC gameplay and GPU rendering have
+not yet been verified.** Upstream Windows benchmarks are not Linux performance claims.
+
+## Build and technical documentation
+
+See [Native Linux build and AppImage](driveclub-pc/LINUX.md) for dependencies,
+local build commands, configuration and validation details.
+
+The [Linux AppImage workflow](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/actions/workflows/linux-appimage.yml)
+builds on Ubuntu 24.04. Successful runs provide an AppImage, checksum and
+`BUILD-INFO.txt` identifying the exact source commit. Version tags also trigger
+release builds. Development artifacts are available for 30 days; published release
+assets are available from the Releases page.
+
+## Credits and project lineage
+
+- **[ondrejeder — Driveclub-PC](https://github.com/ondrejeder/Driveclub-pc-wrapper): original creator of the Driveclub wrapper and its Driveclub-specific launcher, optimisations and fixes. This is the direct upstream project.**
+- **[junminlee2004 — GR2fork](https://github.com/junminlee2004/GR2fork):** the emulator fork on which Driveclub-PC is built; see [README-GR2fork.md](README-GR2fork.md).
+- **[shadPS4 Emulator Project and contributors](https://github.com/shadps4-emu/shadPS4):** the underlying PS4 emulator and the vast majority of the codebase.
+- **Codex (OpenAI):** creator of this fork's Linux port, Linux launcher adaptation, AppImage packaging and Linux CI workflow, working at 303inmyheart's request.
+- **[303inmyheart](https://github.com/303inmyheart):** Linux fork owner and maintainer.
+- [rafidwayne — Driveclub_Widescreen](https://github.com/rafidwayne/Driveclub_Widescreen), GPL-2.0-or-later: the aspect-ratio, video-out width and FOV values used as the starting point for upstream ultrawide support.
+- [SMAA](https://github.com/iryoku/smaa) by Jorge Jimenez et al., MIT licence ([licence text](driveclub-pc/SMAA-LICENSE.txt)).
 - AMD FidelityFX FSR 1, already part of shadPS4.
-- The libraries in `externals/` (git submodules), each under its own licence.
+- The libraries in `externals/`, each under its own licence.
 
 ## Licence
 
-**GPL-2.0-or-later** ([LICENSE](LICENSE)), the same as shadPS4 and GR2fork. Some files carry
-other compatible licences in their SPDX headers; the texts are in [LICENSES/](LICENSES/).
+**GPL-2.0-or-later** ([LICENSE](LICENSE)), inherited from shadPS4, GR2fork and
+Driveclub-PC. Files with other compatible SPDX licences retain those licences;
+see [LICENSES/](LICENSES/). Linux-port attribution does not replace upstream
+copyright notices or licence terms.

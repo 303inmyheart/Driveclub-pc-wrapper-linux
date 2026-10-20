@@ -55,7 +55,7 @@ but game and firmware paths must be adjusted for Linux.
 
 ### GitHub Actions
 
-The [Linux AppImage workflow](https://github.com/303inmyheart/Driveclub-pc-wrapper/actions/workflows/linux-appimage.yml)
+The [Linux AppImage workflow](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/actions/workflows/linux-appimage.yml)
 runs for pushes to `main` / `linux-appimage`, pull requests to `main`, and manual
 **Run workflow** requests. It builds on Ubuntu 24.04, runs the content-path
 regression tests, validates desktop metadata, and checks the packaged `--help`
