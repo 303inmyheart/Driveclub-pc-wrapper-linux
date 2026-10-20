@@ -60,11 +60,13 @@ Release claims are not reproduced AMD results. Local NVIDIA reports subgroup
 - No critical/assertion/device-loss markers found in these completed runs.
   Runs end at the requested timeout. This is not a performance comparison or
   proof that all AMD artifacts are resolved.
-- Depth-overlap diagnostics now show formats, dimensions and sample counts.
-  A still-unimplemented path was observed: 1920x1080 D32Sfloat, 4 samples ->
-  1920x1080 R32G32B32A32Sfloat, 1 sample. A correct conversion needs to preserve
-  all four depth samples rather than average them. No guessed copy was added;
-  its relationship to reported shadows/flicker remains unproven.
+- The initial round identified a missing depth-overlap path: 1920x1080
+  D32Sfloat, 4 samples -> R32G32B32A32Sfloat, 1 sample. The follow-up now
+  preserves the four samples as separate RGBA channels. A standalone Vulkan
+  roundtrip on NVIDIA preserved 48 distinct float values bit-exactly. Gameplay
+  no longer logs the missing copy. Its relationship to specific AMD artifacts
+  remains unverified. See `DRIVECLUB-STAGE2.md`.
 
 Full local evidence and run IDs: `../docs/stage2-graphics-20261020.md`.
-Audio, loading-camera shake, ultrawide FOV, DLSS/FG and photo mode are unchanged.
+Audio fixes and camera investigation: `DRIVECLUB-STAGE2.md`. Loading-camera
+shake remains unresolved; ultrawide FOV, DLSS/FG and photo mode are unchanged.

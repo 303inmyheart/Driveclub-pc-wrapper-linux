@@ -1356,6 +1356,8 @@ add_executable(shadps4
     src/driveclub/render_res.h
     src/driveclub/shader_fixes.cpp
     src/driveclub/shader_fixes.h
+    src/driveclub/audio_queue.h
+    src/driveclub/audio_stats.h
     src/driveclub/widescreen.cpp
     src/driveclub/widescreen.h
     src/driveclub/autopilot.h
