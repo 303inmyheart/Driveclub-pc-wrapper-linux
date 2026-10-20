@@ -41,3 +41,34 @@ Separate artifact: `build/gr2fork-dcpc-fixed-realtime`, private user and saves,
 the executable alone uses default deltatime. This is an experimental combination,
 not an established speed or replay fix. Compare game-clock seconds against wall
 time and repeat the replay test; neither host FPS nor a successful boot proves it.
+
+## Selective main-clock experiment
+
+Owner result: the global real-time helper restored normal speed at ~80 FPS,
+but replay shaking returned. It is not a solution.
+
+Read-only analysis of v1.28 shows `0x663040` is a shared clock update, not a
+single game-speed switch. Its branch at `0x66306e` respects a clock's explicit
+step (`object+0`) unless it equals the real-time sentinel. The global NOP patch
+overrides every clock. The main manager initialises clocks +0x48/+0x88 to
+16,666 us and also maintains derived clocks +0xc8/+0x108, including a separate
+externally driven time path. These derived-clock paths are a candidate for the
+replay regression; exact replay mode detection is not established.
+
+`DCPC_FIXED_TICKRATE=1` + `DCPC_SELECTIVE_CLOCKS=1` leaves the shared helper
+original and redirects only calls at `0x78ef3` and `0x78f2e` (+0x48/+0x88)
+to a private real-time version. The 112-byte helper is cloned into mapped code
+padding at `0x1552100`, separately from existing heap/widescreen stubs; its
+three relative operands are relocated. Validate the full original helper,
+two call sites, known deltatime sites and all padding before any writes.
+Existing matching redirects/clone are accepted for idempotence.
+
+No host callback, frame-rate divisor, external process patch or game-file write.
+The selective flag takes precedence over FIXED_TICKRATE_REALTIME inside the
+fixed-tickrate experiment; default timing remains unchanged.
+
+Verification outside the runtime repo executes both the original guest helper
+and its relocated clone against a deterministic clock: the original respects
+16,666 us while the clone follows 12,500/10,000 us. Scaling, pause, original
+real-time clocks, all 8 prior-patch mixtures, idempotence and atomic signature
+rejections pass. These host-side checks do not prove actual replay correctness.
