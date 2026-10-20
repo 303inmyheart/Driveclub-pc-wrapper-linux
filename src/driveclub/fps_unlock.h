@@ -9,6 +9,7 @@
 // DCPC_FPS_UNLOCK=0 disables it.
 // DCPC_FIXED_TICKRATE=1 selects the experimental community fixed-tickrate alternative,
 // restoring the three known deltatime sites in memory. Validate at target 60 first.
+// DCPC_FIXED_TICKRATE_REALTIME=1 additionally enables only the real elapsed-time helper.
 
 #pragma once
 

@@ -71,6 +71,17 @@ void Apply(VAddr base, u64 size) {
                         s.original.size());
         }
         std::memcpy(option, patched, sizeof(patched));
+        const char* realtime = std::getenv("DCPC_FIXED_TICKRATE_REALTIME");
+        if (realtime && std::strcmp(realtime, "1") == 0) {
+            // driveclub-pc: test real elapsed time without forcing the other deltatime sites.
+            const auto& timer = sites[0];
+            std::memcpy(reinterpret_cast<void*>(base + timer.addr), timer.patched.data(),
+                        timer.patched.size());
+            LOG_INFO(Loader,
+                     "driveclub-pc: experimental fixed tickrate + real elapsed time applied; "
+                     "fixed-fps check and flip interval remain original; speed/replay unverified");
+            return;
+        }
         LOG_INFO(Loader,
                  "driveclub-pc: experimental fixed tickrate applied; deltatime sites restored; "
                  "validate at target 60 before using other rates");
