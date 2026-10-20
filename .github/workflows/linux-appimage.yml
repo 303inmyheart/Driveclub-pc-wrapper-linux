@@ -3,12 +3,13 @@ name: Linux AppImage
 on:
   push:
     branches: [main, linux-appimage]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -46,7 +47,11 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/driveclub-cmake"
           "$RUNNER_TEMP/driveclub-cmake/bin/pip" install cmake==3.31.10
           echo "$RUNNER_TEMP/driveclub-cmake/bin" >> "$GITHUB_PATH"
-          echo "VERSION=linux-${GITHUB_SHA:0:8}" >> "$GITHUB_ENV"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=linux-${GITHUB_SHA:0:8}" >> "$GITHUB_ENV"
+          fi
 
       - name: Initialize Linux dependencies
         run: ./tools/init-linux-submodules.sh
@@ -114,6 +119,23 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
+      - name: Publish GitHub AppImage release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          shopt -s nullglob
+          images=(dist/*.AppImage)
+          checksums=(dist/*.AppImage.sha256)
+          test "${#images[@]}" -eq 1
+          test "${#checksums[@]}" -eq 1
+          gh release create "$RELEASE_TAG" \
+            "${images[0]}" "${checksums[0]}" dist/BUILD-INFO.txt \
+            --title "Driveclub-PC $RELEASE_TAG (Linux AppImage)" \
+            --notes "Linux x86_64 AppImage (AVX2/Vulkan). Download the AppImage, run chmod +x on it, then execute it. Requires your own game and firmware files; none are included. Built and smoke-tested on Ubuntu 24.04; gameplay is not validated by CI." \
+            --verify-tag
 
       - name: Add download link to summary
         env:
