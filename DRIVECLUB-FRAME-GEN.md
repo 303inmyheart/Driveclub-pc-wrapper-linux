@@ -33,6 +33,15 @@ overlay path. HDR, splash screens and notification-only redraws do not generate
 frames. A missing frame, gap above max(40 ms, 2.5 times the smoothed interval),
 or size change resets interpolation history and skips the invalid midpoint.
 
+The generated display view forces alpha to one. The SDK's interpolation output
+stores an inpainting weight in alpha, and the final inpainting pass only writes
+alpha one for pixels it modifies. Sampling that as ImGui source opacity darkens
+the remaining pixels against the black viewport, causing alternating lighting.
+The SDK image itself is unchanged; only its sampled display opacity is overridden.
+Diagnostic generated-image dumps also save `-gen-alpha.png` and
+`-gen-old-black-blend.png`. Ordinary PNG conversion forces alpha one and therefore
+cannot, by itself, reveal this presentation error.
+
 Image quality at HUD edges, disocclusions, fast cars, camera changes and rain
 must be judged in Driveclub; good Killzone results are not proof for this game.
 FG adds GPU work and presentation latency, and cannot improve simulation/input

@@ -450,6 +450,30 @@ static void SavePendingScreenshot(const ScreenshotReadback& readback) {
     }
 
     const auto& primary_path = readback.paths.front();
+    // driveclub-pc: FG dumps must retain evidence hidden by the normal opaque PNG conversion.
+    // The SDK leaves the inpainting weight in alpha where its final pass has no work.
+    if (readback.format == vk::Format::eR8G8B8A8Unorm &&
+        primary_path.filename().string().ends_with("-gen.png")) {
+        auto alpha = rgba;
+        auto formerly_blended = rgba;
+        size_t nonopaque = 0;
+        const auto* pixels = readback.buffer.mapped_data.data();
+        for (size_t i = 0; i < rgba.size(); i += 4) {
+            const u8 a = pixels[i + 3];
+            nonopaque += a != 255;
+            for (size_t c = 0; c < 3; ++c) {
+                alpha[i + c] = a;
+                formerly_blended[i + c] = u8((u32(rgba[i + c]) * a + 127) / 255);
+            }
+        }
+        auto path = primary_path;
+        path.replace_filename(primary_path.stem().string() + "-alpha.png");
+        WritePng(path, alpha, readback.width, readback.height);
+        path.replace_filename(primary_path.stem().string() + "-old-black-blend.png");
+        WritePng(path, formerly_blended, readback.width, readback.height);
+        LOG_INFO(Render_Vulkan, "driveclub-pc: FG raw alpha nonopaque {}/{} pixels; display forces alpha 1",
+                 nonopaque, rgba.size() / 4);
+    }
     if (!WritePng(primary_path, rgba, readback.width, readback.height)) {
         LOG_ERROR(Render_Vulkan, "Failed saving screenshot to {}", primary_path.string());
         return;

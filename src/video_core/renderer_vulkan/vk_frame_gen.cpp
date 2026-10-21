@@ -211,6 +211,9 @@ bool FrameGenerator::Create(u32 w, u32 h) {
             .createImageViewUnique(vk::ImageViewCreateInfo{.image = vk::Image(output),
                                                            .viewType = vk::ImageViewType::e2D,
                                                            .format = SourceFormat,
+                                                           // driveclub-pc: SDK alpha is an inpainting
+                                                           // weight, not presentation opacity.
+                                                           .components = {.a = vk::ComponentSwizzle::eOne},
                                                            .subresourceRange = ColorRange})
             .value;
     output_texture =
