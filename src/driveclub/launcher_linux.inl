@@ -179,6 +179,8 @@ bool ShowLinuxWindow(Settings& s) {
         ImGui::PushItemWidth(230 * scale);
         combo_value("Frame rate", s.target_fps, std::array{30, 60, 120},
                     "30 FPS\00060 FPS\000120 FPS (experimental)\000");
+        ImGui::Combo("Presentation", &s.present_mode,
+                     "Immediate (may tear)\000Mailbox (VSync)\000FIFO (VSync)\000");
         combo_value("Render resolution", s.render_res, std::array{1080, 1440, 2160},
                     "1080p\0001440p\0002160p\000");
         ImGui::Checkbox("Borderless fullscreen", &s.fullscreen);

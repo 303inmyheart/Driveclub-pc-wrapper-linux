@@ -49,6 +49,7 @@ namespace fs = std::filesystem;
 struct Settings {
     std::string game_dir;
     int target_fps = 60;
+    int present_mode = 0; ///< Linux: Immediate, Mailbox, FIFO (in that order)
     bool fullscreen = true;
     int width = 0; ///< 0 = the primary display's resolution
     int height = 0;
@@ -97,6 +98,7 @@ Settings Load() {
         s.game_dir = kv["game_dir"];
     }
     s.target_fps = num("target_fps", s.target_fps);
+    s.present_mode = std::clamp(num("present_mode", s.present_mode), 0, 2);
     s.fullscreen = num("fullscreen", s.fullscreen) != 0;
     s.width = num("width", s.width);
     s.height = num("height", s.height);
@@ -128,6 +130,7 @@ void Save(const Settings& s) {
     out << "# Driveclub-PC launcher settings\n"
         << "game_dir=" << s.game_dir << "\n"
         << "target_fps=" << s.target_fps << "\n"
+        << "present_mode=" << s.present_mode << "\n"
         << "fullscreen=" << int(s.fullscreen) << "\n"
         << "width=" << s.width << "\n"
         << "height=" << s.height << "\n"
@@ -211,6 +214,10 @@ void WriteGameConfig(const Settings& s) {
     gpu["rcas_enabled"] = s.sharpening != 0;
     gpu["rcas_attenuation"] = s.sharpening == 2 ? 100 : 250;
     gpu["readbacks_mode"] = s.readbacks;
+#ifdef __linux__
+    static constexpr std::array modes{"Immediate", "Mailbox", "Fifo"};
+    gpu["present_mode"] = modes[s.present_mode];
+#endif
     // driveclub-pc: a higher render resolution needs a bigger video-memory budget in the game
     // (DCPC_VRAM_EXTRA_MB below), backed by extra direct memory.
     json["General"]["extra_dmem_in_mbytes"] = ExtraVramMb(TargetOutput(s));
@@ -230,6 +237,11 @@ void SetEnvDefault(const char* name, const std::string& value) {
 }
 
 void ApplyRuntime(const Settings& s) {
+#ifdef __linux__
+    static constexpr std::array modes{"Immediate", "Mailbox", "Fifo"};
+    EmulatorSettings.SetPresentMode(modes[s.present_mode]);
+    EmulatorSettings.SetPresentMode(modes[s.present_mode], true);
+#endif
     SetEnvDefault("DCPC_AF", std::to_string(s.af));
     SetEnvDefault("DCPC_AA", std::to_string(s.aa));
     SetEnvDefault("DCPC_PCORE_PIN", s.pcore_pin ? "1" : "0");

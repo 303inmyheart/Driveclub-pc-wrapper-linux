@@ -131,13 +131,19 @@ the Windows version, including its Windows performance results.
 
 The Linux build targets **CUSA00093 with update 1.28**. Successful CI checks cover
 content-path regression tests, desktop metadata, packaged `--help` startup and
-SHA-256 checksums. **Actual Linux gameplay, DLC gameplay and GPU rendering have
-not yet been verified.** Upstream Windows benchmarks are not Linux performance claims.
+SHA-256 checksums. Local CPU-fix builds have also been race-tested on an Intel
+Core Ultra 7 155H with an NVIDIA RTX 4050 Laptop GPU: two separate 1080p test
+starts reached approximately 60 FPS over the measured final minute. This is a
+limited test on one machine, not a guarantee for all races or hardware. DLC
+compatibility and broader rendering correctness still need testing. Upstream
+Windows benchmarks are not Linux performance claims.
 
 ## Build and technical documentation
 
-See [Native Linux build and AppImage](driveclub-pc/LINUX.md) for dependencies,
-local build commands, configuration and validation details.
+For a complete local build without GitHub Actions, see
+[Build the Linux AppImage locally](driveclub-pc/BUILD-LINUX.md).
+Configuration and validation details are in [LINUX.md](driveclub-pc/LINUX.md).
+See the [Linux changelog](CHANGELOG.md) for the full release history.
 
 The [Linux AppImage workflow](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/actions/workflows/linux-appimage.yml)
 builds on Ubuntu 24.04. Successful runs provide an AppImage, checksum and

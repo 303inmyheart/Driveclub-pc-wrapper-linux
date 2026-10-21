@@ -50,6 +50,12 @@ FXAA/SMAA, anisotropic filtering and shader compilation options.
 Use `./Driveclub-PC-…-x86_64.AppImage --launcher` to reopen settings after
 disabling the startup window.
 
+The Linux launcher exposes **Presentation**: Immediate (the mode used in local
+race tests; may show tearing), Mailbox (VSync), or FIFO (VSync). Unsupported
+modes fall back to FIFO and are reported in the log. Settings default to
+Immediate in this Linux port. Readback prefetch, parallel Vulkan recording and
+empty-queue skipping remain off by default; normal use needs no profiling script.
+
 ## Settings, saves and caches
 
 Data lives in `$XDG_DATA_HOME/driveclub-pc`, defaulting to
@@ -83,6 +89,9 @@ AppImage executable with `chmod +x Driveclub-PC-*.AppImage`. Artifacts are
 retained for 30 days; a new build can be started manually.
 
 ### Local build
+
+See [BUILD-LINUX.md](BUILD-LINUX.md) for the complete tested-baseline setup,
+compiler flags, checks, packaging and rebuild instructions.
 
 On Ubuntu 24.04 or a compatible distribution, install the compiler and headers:
 
@@ -141,10 +150,25 @@ same race for at least 90 seconds and close normally. `SUMMARY.txt` reports the
 last 60 seconds and separates recording phases, excluding the first second
 after each switch. This is a diagnostic comparison, not a promised speedup.
 
-The Linux command processor skips queues whose release-published pending count
-is zero. `DCPC_CP_EMPTY_SKIP=0` restores the original polling path; `1` enables
+The optional command-queue optimisation skips queues whose release-published
+pending count is zero. It is off by default. `DCPC_CP_EMPTY_SKIP=0` restores the original polling path; `1` enables
 skipping; `2` alternates it every ten seconds (profiler phases 0/1). Do not
 combine multiple alternating experiments: they share the profiler phase field.
 The optional Vulkan recorder uses producer notifications on Linux instead of
 100-microsecond polling sleeps. It remains disabled by default until race tests
 establish a benefit and correct rendering.
+
+`--readback-experiment` instead tests the existing precise-readback prefetch path:
+CPU affinity stays fixed, parallel Vulkan recording and empty-queue skipping are
+off, and prefetch alternates every ten seconds. The launcher uses 1080p and
+Precise readbacks in the private test data. Run the same race for 120 seconds;
+the report separates prefetch-on/off FPS and inclusive readback waiting times.
+This mode does not require another AppImage build: the CPU-fix AppImage already
+contains the opt-in prefetch implementation. Do not enable it by default until
+both performance and rendering have been checked on real races.
+
+For independent-process readback comparisons, use `--prefetch off` and
+`--prefetch on` in separate runs against the same saved source snapshot.
+Each run fixes 1080p, Precise readbacks and disables alternating experiments.
+The local comparison reached 59.75 / 59.90 FPS respectively, so prefetch has
+not demonstrated a meaningful FPS gain and is not enabled in normal builds.

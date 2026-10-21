@@ -404,11 +404,7 @@ void Liverpool::Process(std::stop_token stoken) {
     // round only burns command-processor time while other queues wait on labels. Keep
     // the original behaviour available for a measured in-run A/B (2) or rollback (0).
     const char* empty_env = std::getenv("DCPC_CP_EMPTY_SKIP");
-#ifdef __linux__
-    const int empty_mode = empty_env ? std::atoi(empty_env) : 1;
-#else
     const int empty_mode = empty_env ? std::atoi(empty_env) : 0;
-#endif
     LOG_INFO(Render, "Empty command-queue skip mode: {} (0=off, 1=on, 2=A/B)", empty_mode);
     // The only thread that spins on a contended tracker region lock.
     VideoCore::RegionLock::gpu_spin_rounds = EmulatorSettings.GetTrackerLockSpinRounds();

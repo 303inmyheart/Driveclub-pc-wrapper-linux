@@ -51,7 +51,8 @@ if [[ -e "$appdir" ]]; then
 fi
 mkdir -p "$appdir/usr/share/doc/driveclub-pc" "$appdir/usr/share/metainfo" "$appdir/usr/lib"
 cp "$root/packaging/linux/io.github.driveclub_pc.metainfo.xml" "$appdir/usr/share/metainfo/"
-cp "$root/LICENSE" "$root/README.md" "$appdir/usr/share/doc/driveclub-pc/"
+cp "$root/LICENSE" "$root/README.md" "$root/README-UPSTREAM.md" \
+    "$root/README-GR2fork.md" "$root/CHANGELOG.md" "$appdir/usr/share/doc/driveclub-pc/"
 cp -r "$root/LICENSES" "$appdir/usr/share/doc/driveclub-pc/"
 cp -r "$root/driveclub-pc" "$appdir/usr/share/doc/driveclub-pc/"
 while IFS= read -r -d '' notice; do
