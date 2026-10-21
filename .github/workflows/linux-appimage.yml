@@ -56,10 +56,13 @@ jobs:
       - name: Initialize Linux dependencies
         run: ./tools/init-linux-submodules.sh
 
-      - name: Test game discovery and DLC paths
+      - name: Test content paths, CPU topology and recorder synchronization
         env:
           CXX: g++-14
-        run: ./tools/test-content-paths.sh
+        run: |
+          ./tools/test-content-paths.sh
+          ./tools/test-recorder-wake.sh
+          ./tools/test-linux-cpu-topology.sh
 
       - name: Validate desktop metadata
         run: |

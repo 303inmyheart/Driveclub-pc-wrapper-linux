@@ -392,9 +392,24 @@ void Liverpool::Process(std::stop_token stoken) {
     const bool sched_wide = !(sched_env && sched_env[0] == '0');
     if (sched_wide && !sched_ab) {
         Common::SetCommandProcessorScheduling(true);
+#ifdef _WIN32
         LOG_INFO(Render, "driveclub-pc: command processor on all performance CPUs, high priority");
+#else
+        LOG_INFO(Render, "driveclub-pc: command processor affinity uses performance CPUs; "
+                         "OS scheduling priority unchanged");
+#endif
     }
     int sched_phase = -1;
+    // Empty queues have a release-published pending count. Taking their mutex on every
+    // round only burns command-processor time while other queues wait on labels. Keep
+    // the original behaviour available for a measured in-run A/B (2) or rollback (0).
+    const char* empty_env = std::getenv("DCPC_CP_EMPTY_SKIP");
+#ifdef __linux__
+    const int empty_mode = empty_env ? std::atoi(empty_env) : 1;
+#else
+    const int empty_mode = empty_env ? std::atoi(empty_env) : 0;
+#endif
+    LOG_INFO(Render, "Empty command-queue skip mode: {} (0=off, 1=on, 2=A/B)", empty_mode);
     // The only thread that spins on a contended tracker region lock.
     VideoCore::RegionLock::gpu_spin_rounds = EmulatorSettings.GetTrackerLockSpinRounds();
 
@@ -430,6 +445,12 @@ void Liverpool::Process(std::stop_token stoken) {
         const bool fast_handoff =
             DriveclubPC::Performance::Enabled(DriveclubPC::Performance::Feature::SubmitHandoff);
         u64 empty_queue_skips = 0;
+        const bool skip_empty = empty_mode == 1 ||
+                                (empty_mode == 2 &&
+                                 (DriveclubPC::Profiler::NowNs() / 10'000'000'000ull) % 2 != 0);
+        if (empty_mode == 2) {
+            DriveclubPC::Profiler::SetPhase(skip_empty ? 1 : 0);
+        }
         if (profile) {
             DriveclubPC::Profiler::AddCpIdle(busy_start - idle_start);
         }
@@ -443,7 +464,7 @@ void Liverpool::Process(std::stop_token stoken) {
         // task, which measured as ~27 % of this thread in lock calls. Now empty queues are
         // skipped without locking, and once a full round made no progress the loop backs off
         // (pause, then yield) before polling again. Opt-in: DCPC_CP_BACKOFF=1; with it off the
-        // loop behaves as upstream (it still tracks `pending`, which is cheap).
+        // only the backoff is disabled; empty-queue skipping is controlled independently.
         u32 rounds_without_progress = 0;
         u32 visits_without_progress = 0;
         while (num_submits || num_commands) {
@@ -453,9 +474,9 @@ void Liverpool::Process(std::stop_token stoken) {
 
             auto& queue = mapped_queues[curr_qid];
 
-            if ((cp_backoff || fast_handoff) &&
+            if ((skip_empty || cp_backoff || fast_handoff) &&
                 queue.pending.load(std::memory_order_acquire) == 0) {
-                if (fast_handoff) {
+                if (skip_empty || fast_handoff) {
                     ++empty_queue_skips;
                 }
                 if (cp_backoff && ++visits_without_progress >= num_mapped_queues) {

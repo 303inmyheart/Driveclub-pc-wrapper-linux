@@ -117,6 +117,34 @@ does not promise support for older glibc versions.
 
 A successful build, help command and settings-window test do **not** establish
 gameplay compatibility. Test real races, timing, audio, controller input,
-readbacks and shader compilation on the intended GPU/driver. Windows-only
-P-core pinning and experimental readback redirection are not enabled on Linux;
-the existing Linux thread and memory implementations remain in use.
+readbacks and shader compilation on the intended GPU/driver. Experimental readback redirection remains Windows-only. On Linux Intel hybrid
+CPUs, the port uses the kernel's `cpu_core` / `cpu_atom` PMU CPU lists to identify
+P-cores even when `topology/core_type` is absent. Graphics core reservation and
+critical-thread affinity respect the inherited CPU affinity. This prevents the
+command processor from being reserved on a low-power E-core. Linux affinity
+changes require no privileged scheduler settings.
+
+## Local performance investigation
+
+`tools/profile-linux.py` runs an existing AppImage against a private copy of your
+settings, caches and saves. Console modules are referenced from their original
+folder. Results are written under `~/Downloads/Driveclub-FPS-Tests/`.
+
+```sh
+python3 tools/profile-linux.py immediate --appimage /path/to/Driveclub-PC.AppImage
+```
+
+`--low-resolution` requests diagnostic 720p rendering. With a build containing
+the Linux queue/recorder changes, `--experiment` enables empty-queue skipping
+and alternates direct and parallel Vulkan recording every ten seconds. Run the
+same race for at least 90 seconds and close normally. `SUMMARY.txt` reports the
+last 60 seconds and separates recording phases, excluding the first second
+after each switch. This is a diagnostic comparison, not a promised speedup.
+
+The Linux command processor skips queues whose release-published pending count
+is zero. `DCPC_CP_EMPTY_SKIP=0` restores the original polling path; `1` enables
+skipping; `2` alternates it every ten seconds (profiler phases 0/1). Do not
+combine multiple alternating experiments: they share the profiler phase field.
+The optional Vulkan recorder uses producer notifications on Linux instead of
+100-microsecond polling sleeps. It remains disabled by default until race tests
+establish a benefit and correct rendering.

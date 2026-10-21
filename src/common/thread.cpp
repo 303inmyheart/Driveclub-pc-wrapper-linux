@@ -43,6 +43,7 @@
 #ifdef __linux__
 #include <dirent.h>
 #include <sys/syscall.h>
+#include "common/linux_cpu_topology.h"
 #endif
 #ifndef _WIN32
 #include <unistd.h>
@@ -53,6 +54,26 @@
 #endif
 
 namespace Common {
+
+#ifdef __linux__
+namespace {
+
+u64 LinuxInitialCpuMask() {
+    static const u64 mask = [] {
+        cpu_set_t allowed;
+        CPU_ZERO(&allowed);
+        if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0)
+            return u64{0};
+        u64 result = 0;
+        for (unsigned cpu = 0; cpu < 64; ++cpu)
+            if (CPU_ISSET(cpu, &allowed)) result |= 1ull << cpu;
+        return result;
+    }();
+    return mask;
+}
+
+} // namespace
+#endif
 
 // driveclub-pc: CPU sets describe hybrid topology without assuming logical CPU numbering.
 void PinPerformanceThread(const char* name) {
@@ -85,6 +106,23 @@ void PinPerformanceThread(const char* name) {
     if (mask) {
         const bool ok = SetCurrentThreadAffinityMask(mask);
         LOG_INFO(Common, "driveclub-pc: P-core pin '{}' mask={:#x}, success={}", name, mask, ok);
+    }
+#elif defined(__linux__)
+    const std::string_view thread{name};
+    const bool helper = thread == "dcpc:QueueSubmit" || thread == "dcpc:VkRecorder";
+    if (thread != "Game:Main" && thread != "shadPS4:GpuCommandProcessor" && !helper)
+        return;
+    const char* env = std::getenv("DCPC_PCORE_PIN");
+    if (env && env[0] == '0') return;
+    u64 mask = GetPerformanceCoreMask();
+    if (thread == "Game:Main" || helper) {
+        mask &= ~GetExclusionStripMask();
+    } else if (const u64 reserved = GetReservedCoreMask(); reserved & mask) {
+        mask &= reserved;
+    }
+    if (mask) {
+        const bool ok = SetCurrentThreadAffinityMask(mask);
+        LOG_INFO(Common, "Linux P-core pin '{}' mask={:#x}, success={}", name, mask, ok);
     }
 #endif
 }
@@ -136,6 +174,13 @@ u64 GetPerformanceCoreMask() {
         return result;
     }();
     return topology.mask;
+#elif defined(__linux__)
+    // Intel hybrid PMUs provide authoritative CPU lists even when topology/core_type
+    // is absent (as on the Core Ultra 7 155H). Do not guess by logical CPU numbering.
+    static const u64 mask = [] {
+        return ReadLinuxPerformanceMask("/sys/bus/event_source/devices", LinuxInitialCpuMask());
+    }();
+    return mask;
 #else
     return 0;
 #endif
@@ -158,6 +203,11 @@ void SetCommandProcessorScheduling(bool wide) {
     }
     SetThreadPriority(GetCurrentThread(),
                       wide ? THREAD_PRIORITY_HIGHEST : THREAD_PRIORITY_NORMAL);
+#elif defined(__linux__)
+    const u64 reserved = GetReservedCoreMask();
+    const u64 performance = GetPerformanceCoreMask();
+    const u64 mask = wide && performance ? performance : reserved;
+    if (mask) SetCurrentThreadAffinityMask(mask);
 #endif
 }
 
@@ -333,6 +383,9 @@ void SetCurrentThreadName(const char* name) {
 #else
     pthread_setname_np(pthread_self(), name);
 #endif
+#ifdef __linux__
+    PinPerformanceThread(name);
+#endif
 }
 
 void SetThreadName(void* thread, const char* name) {
@@ -402,53 +455,6 @@ std::string GetCurrentThreadName() {
 namespace {
 
 std::atomic<bool> g_core_reservation_enabled{false};
-
-#if defined(__linux__)
-// Parses a Linux cpu list ("0,8", "0-3", "0-3,8-11"). Returns 0 on a parse error.
-u64 ParseCpuListLinux(const std::string& s) {
-    u64 mask = 0;
-    std::size_t i = 0;
-    while (i < s.size()) {
-        while (i < s.size() && (s[i] == ',' || s[i] == ' ' || s[i] == '\t' || s[i] == '\n')) {
-            ++i;
-        }
-        if (i >= s.size()) {
-            break;
-        }
-        u64 lo = 0;
-        bool got_digit = false;
-        while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
-            lo = lo * 10 + static_cast<u64>(s[i] - '0');
-            ++i;
-            got_digit = true;
-        }
-        if (!got_digit) {
-            return 0;
-        }
-        u64 hi = lo;
-        if (i < s.size() && s[i] == '-') {
-            ++i;
-            hi = 0;
-            got_digit = false;
-            while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
-                hi = hi * 10 + static_cast<u64>(s[i] - '0');
-                ++i;
-                got_digit = true;
-            }
-            if (!got_digit) {
-                return 0;
-            }
-        }
-        if (lo >= 64 || hi >= 64 || hi < lo) {
-            return 0;
-        }
-        for (u64 cpu = lo; cpu <= hi; ++cpu) {
-            mask |= 1ULL << cpu;
-        }
-    }
-    return mask;
-}
-#endif
 
 u64 HostCpuMask(unsigned hw) {
     return hw >= 64 ? ~0ULL : (1ULL << hw) - 1ULL;
@@ -523,6 +529,8 @@ bool CoreInfoLess(const CoreInfo& a, const CoreInfo& b) {
 #if defined(__linux__)
 // "intel_atom" / "intel_core" on hybrid kernels 5.18+; -1 when there is no hybrid signal.
 int ReadCoreTypeLinux(unsigned cpu) {
+    if (const u64 fast = GetPerformanceCoreMask(); fast && cpu < 64)
+        return (fast & (1ull << cpu)) ? 1 : 0;
     char path[160];
     std::snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%u/topology/core_type", cpu);
     std::ifstream in(path);
@@ -570,6 +578,8 @@ std::vector<CoreInfo> EnumeratePhysicalCores(unsigned hw) {
         if (sibs == 0) {
             sibs = 1ULL << cpu;
         }
+        sibs &= LinuxInitialCpuMask();
+        if (!sibs) continue;
         const int ec = ReadCoreTypeLinux(cpu);
         cores.push_back(CoreInfo{sibs, ec < 0 ? u8{0} : static_cast<u8>(ec)});
         for (unsigned c = 0; c < hw; ++c) {
@@ -626,7 +636,8 @@ ReservedCoreDecision DecideReservedCores() {
     }
     constexpr u64 GUEST_MASK = (1ULL << 7) - 1; // the guest's CPUs 0..6
     const std::vector<CoreInfo> cores = EnumeratePhysicalCores(hw);
-    const u8 top_efficiency = cores.empty() ? u8{0} : cores.back().efficiency_class;
+    if (cores.empty()) return result;
+    const u8 top_efficiency = cores.back().efficiency_class;
 
     {
         static std::once_flag log_once;
@@ -685,6 +696,10 @@ ReservedCoreDecision DecideReservedCores() {
 } // Anonymous namespace
 
 void SetCoreReservationEnabled(bool enabled) {
+#ifdef __linux__
+    // Capture the inherited affinity before the command processor narrows its own mask.
+    (void)LinuxInitialCpuMask();
+#endif
     g_core_reservation_enabled.store(enabled, std::memory_order_release);
 }
 

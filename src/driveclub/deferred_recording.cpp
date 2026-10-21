@@ -23,6 +23,7 @@
 #include "common/types.h"
 #include "driveclub/deferred_recording.h"
 #include "driveclub/frame_profiler.h"
+#include "driveclub/recorder_wake.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -99,7 +100,11 @@ std::atomic<VkCommandBuffer> g_target1{VK_NULL_HANDLE};
 // Recorder state.
 std::atomic<u64> g_done{0};
 std::atomic<u32> g_sleeping{0};
+#ifdef _WIN32
 std::atomic<u32> g_wake_word{0};
+#else
+RecorderWake g_wake_word;
+#endif
 std::jthread g_recorder;
 
 std::mutex g_free_mutex;
@@ -141,9 +146,11 @@ void RecycleChunk(Chunk* chunk) {
 }
 
 void WakeRecorder() {
-    g_wake_word.fetch_add(1, std::memory_order_seq_cst);
 #ifdef _WIN32
+    g_wake_word.fetch_add(1, std::memory_order_seq_cst);
     WakeByAddressSingle(&g_wake_word);
+#else
+    g_wake_word.Notify();
 #endif
 }
 
@@ -338,13 +345,20 @@ void RecorderLoop(std::stop_token stop, Chunk* chunk) {
         if (work) {
             continue;
         }
+#ifdef _WIN32
         const u32 word = g_wake_word.load(std::memory_order_seq_cst);
+#else
+        const u32 word = g_wake_word.Snapshot();
+#endif
         g_sleeping.store(1, std::memory_order_seq_cst);
-        if (!RecorderHasWork(chunk, offset)) {
+        if (!stop.stop_requested() && !RecorderHasWork(chunk, offset)) {
 #ifdef _WIN32
             WaitOnAddress(&g_wake_word, const_cast<u32*>(&word), sizeof(word), 50);
 #else
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            // Park until the producer publishes work, rather than polling after a 100 us
+            // sleep. The producer increments the word before notifying, so a wake between
+            // the work check and wait cannot be lost.
+            g_wake_word.Wait(word, stop);
 #endif
         }
         g_sleeping.store(0, std::memory_order_relaxed);
