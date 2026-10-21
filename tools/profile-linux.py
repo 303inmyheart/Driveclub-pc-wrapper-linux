@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 
 from frame_times import valid_rows, metrics, format_metrics
+from system_telemetry import ResourceSampler
 
 
 def main():
@@ -18,6 +19,8 @@ def main():
     parser.add_argument('mode', choices=('baseline', 'immediate'))
     parser.add_argument('--appimage', required=True, type=Path)
     parser.add_argument('--prepare-only', action='store_true')
+    parser.add_argument('--telemetry', action='store_true',
+                        help='Record read-only GPU clocks/temperatures and emulator thread affinity')
     parser.add_argument('--experiment', action='store_true',
                         help='Alternate direct/parallel Vulkan recording with other experiments disabled')
     parser.add_argument('--readback-experiment', action='store_true',
@@ -126,8 +129,16 @@ def main():
     print(f'Bitte dieselbe Rennsituation mindestens {seconds} Sekunden testen '
           'und danach das Spiel schließen.', flush=True)
     with (run / 'console.log').open('w') as output:
-        result = subprocess.run([str(image), '--launcher'], env=env,
-                                stdout=output, stderr=subprocess.STDOUT)
+        child = subprocess.Popen([str(image), '--launcher'], env=env,
+                                 stdout=output, stderr=subprocess.STDOUT)
+        sampler = ResourceSampler(child.pid, run / 'SYSTEM-TELEMETRY.jsonl') if args.telemetry else None
+        if sampler:
+            sampler.start()
+        try:
+            result = subprocess.CompletedProcess(child.args, child.wait())
+        finally:
+            if sampler:
+                sampler.stop()
     profile = data / 'log/frame_profile.csv'
     summary = [f'Mode: {args.mode}', f'Fixed prefetch: {args.prefetch}', f'Exit status: {result.returncode}', f'Profile: {profile}']
     if profile.exists():

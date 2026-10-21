@@ -47,6 +47,9 @@ bool SetCurrentThreadAffinityMask(u64 mask);
 /// every mask below reads 0 and the walk does nothing.
 void SetCoreReservationEnabled(bool enabled);
 
+// Register the GPU thread so periodic walks preserve its chosen (possibly wide) mask.
+void RegisterCoreReservationOwner();
+
 /// Both logical CPUs of the physical core reserved for the GPU command thread, or 0.
 u64 GetReservedCoreMask();
 

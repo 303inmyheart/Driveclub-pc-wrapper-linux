@@ -376,6 +376,7 @@ void Liverpool::Process(std::stop_token stoken) {
     // gpu_thread_core_reserve: own a physical core, strip it from every other thread, and keep
     // stripping, since Windows threads do not inherit their creator's affinity.
     if (const u64 mask = Common::GetReservedCoreMask()) {
+        Common::RegisterCoreReservationOwner();
         Common::SetCurrentThreadAffinityMask(mask);
         Common::ExcludeReservedCoresFromAllOtherThreads();
         Common::StartPeriodicAffinityRewalk();

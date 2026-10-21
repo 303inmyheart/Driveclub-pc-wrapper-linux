@@ -205,3 +205,12 @@ internal rendering resolution. The corrected 720p scene-only path still needs
 real-menu and race validation; other versions remain experimental. Tests: `./tools/test-game-profile.sh` and
 `python3 tools/test-launch-validation.py --binary /path/to/Driveclub-PC`.
 The launch fixtures intentionally stop at missing firmware and execute no game.
+
+`--telemetry` additionally writes `SYSTEM-TELEMETRY.jsonl`: emulator thread CPU
+load/affinity, CPU frequencies/temperature and optional NVIDIA GPU clocks,
+utilisation, VRAM and power data. Sampling is read-only and follows only the
+launched process tree. CPU percent is per logical core (100% means one core),
+not total-machine utilisation. Missing tools or unreadable sensors are recorded
+without changing power settings. Monotonic timestamps align approximately with
+the frame profiler. The affinity walker preserves its registered GPU owner even
+when that owner uses a wide P-core mask.

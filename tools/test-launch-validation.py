@@ -34,6 +34,7 @@ def main():
         root = Path(temp)
         sfo(root / 'reference/CUSA00093', 'CUSA00093')
         sfo(root / 'region/CUSA12345', 'CUSA12345')
+        sfo(root / 'scene720/CUSA00093', 'CUSA00093')
         sfo(root / 'old/CUSA00093', 'CUSA00093', version='01.27')
         sfo(root / 'mismatch/CUSA12345', 'CUSA12345')
         sfo(root / 'mismatch/CUSA12345-patch', 'CUSA00093', category='gp')
@@ -41,6 +42,7 @@ def main():
         sfo(root / 'matching/CUSA12345-patch', 'CUSA12345', category='gp')
         sfo(root / 'invalid/bad', 'CUSA12A45')
         cases = [('reference', 'firmware modules', False),
+                 ('scene720', 'Render policy: scene target 720p, output 1920x1080', False),
                  ('region', 'firmware modules', True), ('old', 'firmware modules', True),
                  ('matching', 'firmware modules', True),
                  ('mismatch', 'title ID does not match', False),
@@ -49,6 +51,10 @@ def main():
             env = os.environ.copy()
             env.update(DCPC_USER_DIR=str(root / ('data-' + name)), SDL_VIDEODRIVER='dummy',
                        SDL_VIDEO_DRIVER='dummy', APPIMAGE_EXTRACT_AND_RUN='1')
+            if name == 'scene720':
+                settings = Path(env['DCPC_USER_DIR'])
+                settings.mkdir()
+                (settings / 'driveclub_pc.ini').write_text('render_res=720\n')
             result = subprocess.run([str(binary), '--game', str(root / name)], env=env,
                                     text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     timeout=30)

@@ -22,6 +22,7 @@
 #include "common/error.h"
 #include "common/logging/log.h"
 #include "common/thread.h"
+#include "common/core_reservation.h"
 #include "ntapi.h"
 #ifdef __APPLE__
 #include <mach/mach.h>
@@ -455,6 +456,7 @@ std::string GetCurrentThreadName() {
 namespace {
 
 std::atomic<bool> g_core_reservation_enabled{false};
+std::atomic<u64> g_core_reservation_owner{0};
 
 u64 HostCpuMask(unsigned hw) {
     return hw >= 64 ? ~0ULL : (1ULL << hw) - 1ULL;
@@ -695,6 +697,14 @@ ReservedCoreDecision DecideReservedCores() {
 
 } // Anonymous namespace
 
+void RegisterCoreReservationOwner() {
+#ifdef __linux__
+    g_core_reservation_owner.store(static_cast<u64>(syscall(SYS_gettid)), std::memory_order_release);
+#elif defined(_WIN32)
+    g_core_reservation_owner.store(GetCurrentThreadId(), std::memory_order_release);
+#endif
+}
+
 void SetCoreReservationEnabled(bool enabled) {
 #ifdef __linux__
     // Capture the inherited affinity before the command processor narrows its own mask.
@@ -728,6 +738,7 @@ unsigned ExcludeReservedCoresFromAllOtherThreads() {
         return 0;
     }
     const u64 reserved = decision.mask;
+    const u64 owner_tid = g_core_reservation_owner.load(std::memory_order_acquire);
     const unsigned hw = std::thread::hardware_concurrency();
     if (hw == 0) {
         return 0;
@@ -767,8 +778,8 @@ unsigned ExcludeReservedCoresFromAllOtherThreads() {
             ++already_narrow;
             continue;
         }
-        const u64 next_mask = cur_mask & ~reserved;
-        if (next_mask == 0) {
+        const u64 next_mask = ReservationWalkMask(cur_mask, reserved, tid, self_tid, owner_tid);
+        if (next_mask == cur_mask) {
             continue; // stripping would strand it with no CPU
         }
         cpu_set_t new_set;
@@ -825,8 +836,9 @@ unsigned ExcludeReservedCoresFromAllOtherThreads() {
             ga.Group = 0;
             ga.Mask = static_cast<KAFFINITY>(host_cpus);
         }
-        const u64 next_mask = cur_mask & ~reserved;
-        if ((cur_mask & reserved) != 0 && next_mask != 0) {
+        const u64 next_mask = ReservationWalkMask(cur_mask, reserved, te.th32ThreadID,
+                                                  self_tid, owner_tid);
+        if (next_mask != cur_mask) {
             ga.Mask = static_cast<KAFFINITY>(next_mask);
             if (SetThreadGroupAffinity(h, &ga, nullptr)) {
                 ++narrowed;

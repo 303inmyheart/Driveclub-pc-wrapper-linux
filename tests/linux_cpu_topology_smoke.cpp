@@ -5,10 +5,23 @@
 #include <iostream>
 #include <unistd.h>
 #include "common/linux_cpu_topology.h"
+#include "common/core_reservation.h"
 
 int main() {
     using namespace Common;
     assert(ParseCpuListLinux("0-3,8-11\n") == 0xf0f);
+    // Regression: a periodic walk runs on another thread. The GPU owner may have
+    // widened from its reserved P-core to all P-cores and must not lose that core.
+    constexpr unsigned gpu = 21, walker = 42, game = 77;
+    constexpr std::uint64_t pcores = 0xfff, reserved = 0xc00;
+    assert(ReservationWalkMask(pcores, reserved, gpu, walker, gpu) == pcores);
+    assert(ReservationWalkMask(pcores, reserved, game, walker, gpu) == 0x3ff);
+    auto mask = pcores;
+    for (int pass = 0; pass < 20; ++pass)
+        mask = ReservationWalkMask(mask, reserved, gpu, walker, gpu);
+    assert(mask == pcores);
+    assert(ReservationWalkMask(0x30, reserved, game, walker, gpu) == 0x30);
+    assert(ReservationWalkMask(reserved, reserved, game, walker, gpu) == reserved);
     for (const auto* invalid : {"0-64", "64", "8-2", "-1", "99999999999999999999", "0x1", "0,"})
         assert(ParseCpuListLinux(invalid) == 0);
     char pattern[] = "/tmp/driveclub-topology-XXXXXX";

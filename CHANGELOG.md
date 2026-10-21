@@ -11,6 +11,12 @@ The original Windows history is preserved in
 
 ## Unreleased
 
+- Fix periodic affinity rewalks stripping the reserved P-core from the graphics
+  command processor after it widened to all P-cores. Preserve the registered
+  owner's mask while still narrowing other threads without widening/stranding them.
+- Add optional read-only GPU/CPU telemetry to local profiling runs to distinguish
+  scheduler contention from clock, thermal, memory and workload differences.
+
 - Add 720p internal rendering to the launcher, settings persistence and engine
   scaling. Sub-native 720p scales the 3D scene while preserving native 1080p
   menu/HUD output. Correct the initial experiment that also reduced the output
