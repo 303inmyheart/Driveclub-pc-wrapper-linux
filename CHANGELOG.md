@@ -12,7 +12,9 @@ The original Windows history is preserved in
 ## Unreleased
 
 - Add 720p internal rendering to the launcher, settings persistence and engine
-  scaling, including 1280x720 at 16:9 and aspect-aware ultrawide output.
+  scaling. Sub-native 720p scales the 3D scene while preserving native 1080p
+  menu/HUD output. Correct the initial experiment that also reduced the output
+  and cropped menus; the revised scene-only path needs gameplay validation.
 - Remove the CUSA00093-only launch restriction. Other valid CUSA IDs and game
   versions are allowed with an explicit experimental warning. CUSA00093 / 01.28
   remains the tested reference; this does not establish support for other games.

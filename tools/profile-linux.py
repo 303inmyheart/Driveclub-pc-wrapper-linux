@@ -27,7 +27,7 @@ def main():
     parser.add_argument('--prefetch', choices=('off', 'on'),
                         help='Fixed prefetch setting for separate-process comparisons')
     parser.add_argument('--low-resolution', action='store_true',
-                        help='Diagnostic 1280x720 rendering with the engine resolution-scale option')
+                        help='Diagnostic 720p scene scaling while preserving native menu/HUD output')
     args = parser.parse_args()
     if sum([args.experiment, args.readback_experiment, args.queue_experiment]) > 1:
         parser.error('Choose only one alternating experiment')
@@ -70,7 +70,7 @@ def main():
     if readback_test:
         values['readbacks'] = '2'
     if args.low_resolution:
-        values['render_res'] = '1080'  # Explicit environment below supplies diagnostic scaling.
+        values['render_res'] = '720'  # Scale the scene, retain the native UI framebuffer.
     settings.write_text('# Isolated FPS diagnostic settings\n' +
                         ''.join(f'{key}={value}\n' for key, value in values.items()))
     if args.mode == 'immediate' or readback_test:
@@ -119,8 +119,9 @@ def main():
                    DCPC_PERF='0', DCPC_WRITE_WINDOW_AB='0',
                    DCPC_READBACK_HYBRID='0', DCPC_READBACK_HYBRID_AB='0')
     if args.low_resolution:
-        env.update(DCPC_RENDER_RES='1280x720', DCPC_GAME_ARGS='-resolutionscale 0.666667',
-                   DCPC_WIDESCREEN='', DCPC_VRAM_EXTRA_MB='0')
+        for key in ('DCPC_RENDER_RES', 'DCPC_WIDESCREEN', 'DCPC_VRAM_EXTRA_MB'):
+            env.pop(key, None)
+        env['DCPC_GAME_ARGS'] = '-resolutionscale 0.666667'
     seconds = 120 if readback_test or ab_test else 60
     print(f'Bitte dieselbe Rennsituation mindestens {seconds} Sekunden testen '
           'und danach das Spiel schließen.', flush=True)

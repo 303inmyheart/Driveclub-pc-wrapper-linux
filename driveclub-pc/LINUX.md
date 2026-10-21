@@ -196,10 +196,12 @@ excludes the first second after each phase change and writes per-phase frame
 percentiles plus `LONGEST-FRAMES.csv`. Scene progression and rare spikes can
 still affect a single A/B run; check repeatability before enabling a default.
 
-720p uses `-resolutionscale 0.666667` plus the in-memory render-size patch.
-At 16:9 this requests 1280x720; ultrawide follows the selected display aspect.
-Changing only window size does not lower internal rendering resolution. The
-reference executable has been tested at 720p; other builds still depend on
-matching patch sites. Tests: `./tools/test-game-profile.sh` and
+720p uses `-resolutionscale 0.666667` for the 3D scene only. Menu/HUD output
+stays at native 1920x1080 at 16:9; ultrawide follows the display aspect at native
+1080 output lines. The original experiment that also shrank 19 output/viewport
+sites to 1280x720 cropped menus and was reported unstable; that path is no longer
+used for the 720p launcher setting. Changing only window size does not lower
+internal rendering resolution. The corrected 720p scene-only path still needs
+real-menu and race validation; other versions remain experimental. Tests: `./tools/test-game-profile.sh` and
 `python3 tools/test-launch-validation.py --binary /path/to/Driveclub-PC`.
 The launch fixtures intentionally stop at missing firmware and execute no game.

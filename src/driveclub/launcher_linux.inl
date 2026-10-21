@@ -185,7 +185,7 @@ bool ShowLinuxWindow(Settings& s) {
         ImGui::Combo("Presentation", &s.present_mode,
                      "Immediate (may tear)\000Mailbox (VSync)\000FIFO (VSync)\000");
         combo_value("Render resolution", s.render_res, std::array{720, 1080, 1440, 2160},
-                    "720p (lower GPU load)\0001080p\0001440p\0002160p\000");
+                    "720p scene (native UI)\0001080p\0001440p\0002160p\000");
         ImGui::Checkbox("Borderless fullscreen", &s.fullscreen);
         ImGui::BeginDisabled(s.fullscreen);
         static constexpr std::array sizes{

@@ -180,7 +180,7 @@ Widescreen::Output TargetOutput(const Settings& s) {
         w = s.width;
         h = s.height;
     }
-    return Widescreen::ComputeOutput(w, h, static_cast<u32>(s.render_res));
+    return Widescreen::ComputeOutput(w, h, PresentationLines(static_cast<u32>(s.render_res)));
 }
 
 /// driveclub-pc: extra video memory the game needs for its render targets at this size.
@@ -250,11 +250,14 @@ void ApplyRuntime(const Settings& s) {
     SetEnvDefault("DCPC_ASYNC_SHADERS", s.async_shaders ? "1" : "0");
     SetEnvDefault("DCPC_ASYNC_PIPELINES", s.async_shaders ? "1" : "0");
     const auto out = TargetOutput(s);
-    if (out.height != 1080) {
-        // The engine's own -resolutionscale switch scales its render targets (width aligned to
-        // 128, height = width * 9 / 16, or table height * scale with widescreen).
-        SetEnvDefault("DCPC_GAME_ARGS", std::string(RenderScaleArgument(out.height)));
+    const auto scene_lines = s.render_res == 720 ? 720u : out.height;
+    if (scene_lines != 1080) {
+        // Below native, scale the 3D targets only; leave the native UI/output buffers intact.
+        // Above native, retain the established matched scene/output path and memory budget.
+        SetEnvDefault("DCPC_GAME_ARGS", std::string(RenderScaleArgument(scene_lines)));
     }
+    LOG_INFO(Loader, "Render policy: scene target {}p, output {}x{}, native UI preserved below 1080p",
+             scene_lines, out.width, out.height);
     if (out.wide || out.height != 1080) {
         // The game's display buffers follow DCPC_RENDER_RES.
         SetEnvDefault("DCPC_VRAM_EXTRA_MB", std::to_string(ExtraVramMb(out)));
@@ -551,7 +554,7 @@ void BuildControls() {
     // driveclub-pc: lines; the width follows the display (or window) aspect, see widescreen.h.
     Label(L"Render resolution", L, y, 140);
     Combo(IdRenderRes, C, y, W,
-          {L"720p (lower GPU load)", L"1080p (native)", L"1440p (sharper, about 10-15% slower)",
+          {L"720p scene (native UI)", L"1080p (native)", L"1440p (sharper, about 10-15% slower)",
            L"2160p (very demanding)"},
           s.render_res == 2160   ? 3
           : s.render_res == 1440 ? 2

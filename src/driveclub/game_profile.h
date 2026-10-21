@@ -18,6 +18,12 @@ inline bool IsRenderResolution(int lines) {
     return lines == 720 || lines == 1080 || lines == 1440 || lines == 2160;
 }
 
+// Sub-native rendering lowers the 3D scene only. The menus/HUD still use the native
+// output coordinate system; shrinking their framebuffer crops the interface.
+inline unsigned PresentationLines(unsigned scene_lines) {
+    return scene_lines == 720 ? 1080 : scene_lines;
+}
+
 inline std::string_view RenderScaleArgument(unsigned lines) {
     switch (lines) {
     case 720: return "-resolutionscale 0.666667";

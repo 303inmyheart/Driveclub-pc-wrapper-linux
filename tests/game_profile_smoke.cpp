@@ -23,6 +23,14 @@ int main() {
     assert(RenderScaleArgument(1080).empty());
     assert(RenderScaleArgument(1440) == "-resolutionscale 1.3333");
     assert(RenderScaleArgument(2160) == "-resolutionscale 2");
+    assert(PresentationLines(720) == 1080);
+    assert(PresentationLines(1080) == 1080 && PresentationLines(1440) == 1440);
+    // Regression: 720p scene rendering must not shrink the framebuffer used by menu/HUD.
+    const auto scene720 = Widescreen::ComputeOutput(1920, 1080, PresentationLines(720));
+    assert(scene720.width == 1920 && scene720.height == 1080 && !scene720.wide);
+    const auto scene720wide = Widescreen::ComputeOutput(3440, 1440, PresentationLines(720));
+    assert(scene720wide.width == 2580 && scene720wide.height == 1080 && scene720wide.wide);
+    assert(RenderScaleArgument(720) == "-resolutionscale 0.666667");
     const auto normal = Widescreen::ComputeOutput(1920, 1080, 720);
     assert(normal.width == 1280 && normal.height == 720 && !normal.wide);
     const auto narrow = Widescreen::ComputeOutput(1920, 1200, 720);

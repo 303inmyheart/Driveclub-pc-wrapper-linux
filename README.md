@@ -138,8 +138,9 @@ on these versions too, but only when the expected bytes at their known locations
 match; unmatched patch groups are skipped. Offsets are not automatically relocated,
 so compatibility, correct game speed and every setting are not guaranteed.
 
-Render resolution includes **720p**, 1080p, 1440p and 2160p. 720p uses the engine's
-resolution scaling and matching render-size patch; native 16:9 output is 1280x720.
+Render resolution includes **720p**, 1080p, 1440p and 2160p. 720p scales the 3D scene through the engine while keeping the menu/HUD output
+at native 1080p (with aspect-aware ultrawide output). It does not shrink the
+interface framebuffer to 1280x720.
 
 Successful CI checks cover
 content-path regression tests, desktop metadata, packaged `--help` startup and
