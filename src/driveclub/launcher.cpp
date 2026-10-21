@@ -124,6 +124,8 @@ Settings Load() {
     if (s.target_fps != 30 && s.target_fps != 60 && s.target_fps != 120) {
         s.target_fps = 60;
     }
+    // driveclub-pc: FG is the dedicated 60-FPS-base mode in the launcher.
+    s.frame_generation = s.frame_generation && s.target_fps == 60;
     return s;
 }
 
@@ -346,7 +348,6 @@ enum Id : int {
     IdAa,
     IdPcore,
     IdAsyncShaders,
-    IdFrameGen,
     IdShowFps,
     IdDeferred,
     IdClassic,
@@ -511,8 +512,10 @@ bool Checked(int id) {
 void CollectSettings() {
     auto& s = g_ui->settings;
     s.game_dir = GetText(IdGameEdit);
-    static constexpr int fps_values[] = {30, 60, 120};
-    s.target_fps = fps_values[std::clamp(ComboIndex(IdFps), 0, 2)];
+    static constexpr int fps_values[] = {30, 60, 60, 120};
+    const int frame_mode = std::clamp(ComboIndex(IdFps), 0, 3);
+    s.target_fps = fps_values[frame_mode];
+    s.frame_generation = frame_mode == 2;
     s.fullscreen = ComboIndex(IdDisplay) == 0;
     const int res =
         std::clamp(ComboIndex(IdResolution), 0, static_cast<int>(g_ui->resolutions.size()) - 1);
@@ -528,7 +531,6 @@ void CollectSettings() {
     static constexpr int render_values[] = {1080, 1440, 2160};
     s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 2)];
     s.async_shaders = Checked(IdAsyncShaders);
-    s.frame_generation = Checked(IdFrameGen);
     s.show_fps = Checked(IdShowFps);
     s.deferred_recording = Checked(IdDeferred);
     s.classic_vblank = Checked(IdClassic);
@@ -605,9 +607,11 @@ void BuildControls() {
 
     Label(L"Frame rate", L, y, 140);
     Combo(IdFps, C, y, W,
-          {L"30 FPS (as on PS4)", L"60 FPS (recommended)", L"120 FPS (experimental)"},
+          {L"30 FPS (as on PS4)", L"60 FPS (recommended)", L"60 FPS + FG (2x, ~120 output)",
+           L"120 FPS (experimental)"},
           s.target_fps == 30    ? 0
-          : s.target_fps == 120 ? 2
+          : s.target_fps == 120 ? 3
+          : s.frame_generation ? 2
                                 : 1);
     y += Row;
 
@@ -683,11 +687,6 @@ void BuildControls() {
          BS_AUTOCHECKBOX | WS_TABSTOP, C, y, W, 22, IdAsyncShaders);
     SendMessageW(ui.controls[IdAsyncShaders], BM_SETCHECK,
                  s.async_shaders ? BST_CHECKED : BST_UNCHECKED, 0);
-    y += 26;
-    Make(L"BUTTON", L"Frame generation (FSR 3, experimental 2x)",
-         BS_AUTOCHECKBOX | WS_TABSTOP, C, y, W, 22, IdFrameGen);
-    SendMessageW(ui.controls[IdFrameGen], BM_SETCHECK,
-                 s.frame_generation ? BST_CHECKED : BST_UNCHECKED, 0);
     y += 26;
     Make(L"BUTTON", L"Show FPS counter", BS_AUTOCHECKBOX | WS_TABSTOP, C, y, W, 22, IdShowFps);
     SendMessageW(ui.controls[IdShowFps], BM_SETCHECK, s.show_fps ? BST_CHECKED : BST_UNCHECKED, 0);

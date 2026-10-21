@@ -7,10 +7,13 @@ The existing AA, render resolution and FSR 1 settings retain their meaning.
 
 ## Controls and data
 
-`Frame generation (FSR 3, experimental 2x)` in the launcher persists as
+`60 FPS + FG (2x, ~120 output)` in the launcher's Frame rate menu persists as
 `frame_generation=0|1` in `user/driveclub_pc.ini`. Default off. The process
 override is `DCPC_FRAME_GEN=0|1`. It adds one intermediate frame between
 consecutive real frames; the game's target FPS remains the real-frame target.
+The four launcher modes are 30, 60, 60 + FG, and 120 FPS. Only 60 + FG enables
+generation; the other three store `frame_generation=0`. Existing INI settings
+remain compatible, with FG normalized off for a saved non-60 target.
 The existing FPS overlay still reports real game frames. The log separately
 reports real frames, successful presentation pairs, GPU timestamp duration,
 pair spacing and failures every five seconds.
