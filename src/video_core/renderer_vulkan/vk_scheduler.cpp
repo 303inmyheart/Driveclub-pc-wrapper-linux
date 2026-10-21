@@ -189,7 +189,13 @@ struct AsyncSubmitter {
             .signalSemaphoreCount = info.num_signal_semas,
             .pSignalSemaphores = info.signal_semas.data(),
         };
+        const u64 lock_start =
+            DriveclubPC::Profiler::Enabled() ? DriveclubPC::Profiler::NowNs() : 0;
         std::scoped_lock lk{Scheduler::submit_mutex};
+        if (lock_start) {
+            DriveclubPC::Profiler::AddMax(DriveclubPC::Profiler::MaxStat::AsyncSubmitLockWait,
+                                          DriveclubPC::Profiler::NowNs() - lock_start);
+        }
         ImGui::Core::TextureManager::Submit();
         const auto result = job.queue.submit(submit_info, info.fence);
         ASSERT_MSG(result != vk::Result::eErrorDeviceLost, "Device lost during submit");
@@ -457,7 +463,13 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
         // thread; on the same queue it must not overtake it.
         DrainAsyncSubmits();
     }
+    const u64 lock_start =
+        DriveclubPC::Profiler::Enabled() ? DriveclubPC::Profiler::NowNs() : 0;
     std::scoped_lock lk{submit_mutex};
+    if (lock_start) {
+        DriveclubPC::Profiler::AddMax(DriveclubPC::Profiler::MaxStat::SubmitLockWait,
+                                      DriveclubPC::Profiler::NowNs() - lock_start);
+    }
     // Every submit of this scheduler runs on the GPU command thread, which is
     // where the hook's state lives.
     if (submit_hook_) {

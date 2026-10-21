@@ -11,16 +11,26 @@ The original Windows history is preserved in
 
 ## Unreleased
 
+No changes yet.
+
+## 0.2.3 — 2026-10-22
+
+Locally built Linux release. Original upstream credits and Windows history are
+preserved; changes below belong to this Linux fork.
+
+### Fixed
+
 - Fix periodic affinity rewalks stripping the reserved P-core from the graphics
   command processor after it widened to all P-cores. Preserve the registered
   owner's mask while still narrowing other threads without widening/stranding them.
-- Add optional read-only GPU/CPU telemetry to local profiling runs to distinguish
-  scheduler contention from clock, thermal, memory and workload differences.
-
 - Add 720p internal rendering to the launcher, settings persistence and engine
   scaling. Sub-native 720p scales the 3D scene while preserving native 1080p
   menu/HUD output. Correct the initial experiment that also reduced the output
-  and cropped menus; the revised scene-only path needs gameplay validation.
+  and cropped menus. The user reported that the revised scene-only path works;
+  broader menu, race and hardware coverage remains unverified.
+
+### Experimental game versions
+
 - Remove the CUSA00093-only launch restriction. Other valid CUSA IDs and game
   versions are allowed with an explicit experimental warning. CUSA00093 / 01.28
   remains the tested reference; this does not establish support for other games.
@@ -33,8 +43,22 @@ The original Windows history is preserved in
   bytes; unsupported executable layouts can therefore remain unpatched.
 - Add profile/scaling/patch-transaction regression checks and headless launch
   fixtures for alternate IDs, old builds and matching/mismatching updates.
+
+### Local diagnostics and validation
+
+- Add optional read-only GPU/CPU telemetry to local profiling runs to distinguish
+  scheduler contention from clock, thermal, memory and workload differences.
+- Record NVIDIA power/thermal limiting reasons, CPU thermal throttle counters
+  and separate swapchain acquisition / queue-lock wait timings. These measurements
+  do not change queue synchronisation or power settings.
 - Extend local profiling with frame percentiles, long-frame exports and isolated
   queue/parallel-recording comparisons. These experiments remain off by default.
+- The latest battery-powered diagnostic run measured approximately 37.8 FPS,
+  with GPU power/thermal limiting flags and rising CPU thermal throttle counters.
+  The user reported approximately 60 FPS again after connecting AC power.
+  This is a limited comparison on one laptop, not a new universal FPS fix.
+- Steam Deck performance and compatibility remain unverified. An issue reports
+  approximately 20 FPS at 1080p; no Deck-specific fix or 60 FPS claim is made.
 
 ## 0.2.2 — 2026-10-21
 

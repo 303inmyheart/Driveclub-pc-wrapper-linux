@@ -37,7 +37,7 @@ sudo apt-get install build-essential g++-14 clang-19 lld-19 ninja-build git curl
 ```sh
 git clone https://github.com/303inmyheart/Driveclub-pc-wrapper-linux.git
 cd Driveclub-pc-wrapper-linux
-git checkout v0.2.2
+git checkout v0.2.3
 mkdir -p .tools
 python3 -m venv .tools/build-env
 .tools/build-env/bin/pip install cmake==3.31.10
@@ -46,7 +46,7 @@ export PATH="$PWD/.tools/build-env/bin:$PATH"
 ```
 
 Use the targeted submodule script rather than recursively cloning every nested
-upstream dependency. To build development code, omit `git checkout v0.2.2`.
+upstream dependency. To build development code, omit `git checkout v0.2.3`.
 
 ## 3. Check and build
 
@@ -57,7 +57,7 @@ CXX=g++-14 ./tools/test-recorder-wake.sh
 desktop-file-validate packaging/linux/io.github.driveclub_pc.desktop
 appstreamcli validate --no-net packaging/linux/io.github.driveclub_pc.metainfo.xml
 
-CC=clang-19 CXX=clang++-19 BUILD_JOBS=2 VERSION=0.2.2 \
+CC=clang-19 CXX=clang++-19 BUILD_JOBS=2 VERSION=0.2.3 \
   ./tools/build-appimage.sh \
   -DCMAKE_C_FLAGS=--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/14 \
   -DCMAKE_CXX_FLAGS=--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/14 \
@@ -71,8 +71,8 @@ libraries and licence notices, and packages only application files.
 Outputs:
 
 ```text
-dist/Driveclub-PC-0.2.2-x86_64.AppImage
-dist/Driveclub-PC-0.2.2-x86_64.AppImage.sha256
+dist/Driveclub-PC-0.2.3-x86_64.AppImage
+dist/Driveclub-PC-0.2.3-x86_64.AppImage.sha256
 ```
 
 Build intermediates live in `build/linux-release/`. `BUILD_JOBS`, `VERSION`,
@@ -84,10 +84,10 @@ base distribution, choose a fresh build directory.
 
 ```sh
 cd dist
-sha256sum --check Driveclub-PC-0.2.2-x86_64.AppImage.sha256
-chmod +x Driveclub-PC-0.2.2-x86_64.AppImage
-APPIMAGE_EXTRACT_AND_RUN=1 ./Driveclub-PC-0.2.2-x86_64.AppImage --help
-./Driveclub-PC-0.2.2-x86_64.AppImage --launcher
+sha256sum --check Driveclub-PC-0.2.3-x86_64.AppImage.sha256
+chmod +x Driveclub-PC-0.2.3-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./Driveclub-PC-0.2.3-x86_64.AppImage --help
+./Driveclub-PC-0.2.3-x86_64.AppImage --launcher
 ```
 
 If FUSE is unavailable, prefix the last command with

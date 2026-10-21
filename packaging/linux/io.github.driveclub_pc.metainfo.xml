@@ -16,6 +16,10 @@
   <provides><binary>Driveclub-PC</binary></provides>
   <url type="homepage">https://github.com/303inmyheart/Driveclub-pc-wrapper-linux</url>
   <releases>
+    <release version="0.2.3" date="2026-10-22">
+      <description><p>720p scene rendering with native menus, guarded experimental game-version patches,
+      preserved GPU owner affinity and expanded local performance diagnostics.</p></description>
+    </release>
     <release version="0.2.2" date="2026-10-21">
       <description><p>Linux hybrid CPU scheduling fix and persistent presentation settings.</p></description>
     </release>

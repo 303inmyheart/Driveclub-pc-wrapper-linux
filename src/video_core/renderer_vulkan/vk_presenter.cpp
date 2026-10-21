@@ -947,6 +947,8 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
     }
 
+    const u64 acquire_start =
+        DriveclubPC::Profiler::Enabled() ? DriveclubPC::Profiler::NowNs() : 0;
     if (!swapchain.AcquireNextImage()) {
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
         if (!swapchain.AcquireNextImage()) {
@@ -955,6 +957,11 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
             free_frame();
             return;
         }
+    }
+
+    if (acquire_start) {
+        DriveclubPC::Profiler::AddMax(DriveclubPC::Profiler::MaxStat::PresentAcquire,
+                                      DriveclubPC::Profiler::NowNs() - acquire_start);
     }
 
     // Reset fence for queue submission. Do it here instead of GetRenderFrame() because we may
@@ -1166,7 +1173,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
 
     // Present to swapchain.
     {
+        const u64 lock_start =
+            DriveclubPC::Profiler::Enabled() ? DriveclubPC::Profiler::NowNs() : 0;
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
+        if (lock_start) {
+            DriveclubPC::Profiler::AddMax(DriveclubPC::Profiler::MaxStat::PresentLockWait,
+                                          DriveclubPC::Profiler::NowNs() - lock_start);
+        }
         const u64 hold_start =
             DriveclubPC::Profiler::Enabled() ? DriveclubPC::Profiler::NowNs() : 0;
         if (!swapchain.Present()) {

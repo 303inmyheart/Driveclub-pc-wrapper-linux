@@ -90,8 +90,14 @@ void AddEvent(Event event, u64 value = 1);
 // Largest value in the frame.
 //   SubmitDelay  a batch's wait on the submit thread: hand-over to vkQueueSubmit done
 //   PresentHold  the presenter holding the queue-submit lock around vkQueuePresentKHR
+//   PresentAcquire  swapchain image acquisition, including a retry/recreation if necessary
+//   PresentLockWait / SubmitLockWait / AsyncSubmitLockWait  time waiting to acquire the
+//                         shared queue-submit lock, separated by its caller
 // Columns submit_delay_max_ms, present_hold_max_ms.
-enum class MaxStat : u8 { SubmitDelay, PresentHold, Count };
+enum class MaxStat : u8 {
+    SubmitDelay, PresentHold, PresentAcquire, PresentLockWait, SubmitLockWait,
+    AsyncSubmitLockWait, Count
+};
 void AddMax(MaxStat stat, u64 ns);
 
 // GPU execution time of one command processor batch (from the GPU-completion watcher).

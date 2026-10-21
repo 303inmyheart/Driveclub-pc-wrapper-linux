@@ -20,6 +20,7 @@ class ResourceSampler:
         self.previous = {}
         self.hz = os.sysconf('SC_CLK_TCK')
         self.nvidia = shutil.which('nvidia-smi')
+        self.gpu_limits_supported = True
 
     def start(self):
         self.thread.start()
@@ -92,12 +93,40 @@ class ResourceSampler:
         except (OSError, subprocess.TimeoutExpired) as error:
             return {'error': str(error)}
 
+    def gpu_limits(self):
+        # Keep this separate: older drivers may reject these fields, but their basic
+        # clock/utilisation samples must still be recorded.
+        if not self.nvidia or not self.gpu_limits_supported:
+            return {'error': 'GPU limit query unavailable'}
+        fields = ('uuid,clocks_event_reasons.active,clocks_event_reasons.sw_power_cap,'
+                  'clocks_event_reasons.hw_thermal_slowdown,'
+                  'clocks_event_reasons.sw_thermal_slowdown,'
+                  'clocks_event_reasons.hw_power_brake_slowdown,enforced.power.limit')
+        try:
+            result = subprocess.run([self.nvidia, '--query-gpu=' + fields, '--format=csv,nounits'],
+                                    capture_output=True, text=True, timeout=2)
+            if result.returncode:
+                self.gpu_limits_supported = False
+                return {'error': result.stderr.strip() or result.stdout.strip()}
+            return list(csv.DictReader(io.StringIO(result.stdout), skipinitialspace=True))
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return {'error': str(error)}
+
     def loop(self):
         with self.output.open('w') as output:
             while not self.stop_event.is_set():
                 now = time.monotonic()
                 record = dict(monotonic_ms=now * 1000, threads=self.cpu_samples(now))
                 record['gpu'] = self.gpu_sample()
+                record['gpu_limits'] = self.gpu_limits()
+                # Cumulative kernel counters: increases during a run indicate throttling.
+                throttle = {}
+                for path in Path('/sys/devices/system/cpu').glob('cpu[0-9]*/thermal_throttle/*_throttle_count'):
+                    try:
+                        throttle[path.parent.parent.name + ':' + path.name] = int(path.read_text())
+                    except (OSError, ValueError):
+                        pass
+                record['cpu_throttle_counts'] = throttle
                 frequencies = {}
                 for path in Path('/sys/devices/system/cpu').glob('cpu[0-9]*/cpufreq/scaling_cur_freq'):
                     try:

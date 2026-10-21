@@ -201,8 +201,9 @@ stays at native 1920x1080 at 16:9; ultrawide follows the display aspect at nativ
 1080 output lines. The original experiment that also shrank 19 output/viewport
 sites to 1280x720 cropped menus and was reported unstable; that path is no longer
 used for the 720p launcher setting. Changing only window size does not lower
-internal rendering resolution. The corrected 720p scene-only path still needs
-real-menu and race validation; other versions remain experimental. Tests: `./tools/test-game-profile.sh` and
+internal rendering resolution. The tester reported that the corrected scene-only
+path works; wider menu/race coverage and other versions remain experimental.
+Tests: `./tools/test-game-profile.sh` and
 `python3 tools/test-launch-validation.py --binary /path/to/Driveclub-PC`.
 The launch fixtures intentionally stop at missing firmware and execute no game.
 
@@ -214,3 +215,18 @@ not total-machine utilisation. Missing tools or unreadable sensors are recorded
 without changing power settings. Monotonic timestamps align approximately with
 the frame profiler. The affinity walker preserves its registered GPU owner even
 when that owner uses a wide P-core mask.
+
+Telemetry also includes NVIDIA power/thermal clock-limiting reasons and cumulative
+CPU thermal throttle counters where supported. Compare counter changes during
+the run, not their absolute values. Optional NVIDIA fields are queried separately
+so an unsupported driver query does not suppress basic clock/utilisation samples.
+The frame CSV and summary distinguish swapchain image acquisition,
+presentation-lock acquisition, direct/async submission-lock acquisition and the
+time spent holding the lock during presentation. Columns ending in `_max_ms`
+are per-frame maxima, not sums or pure GPU execution times.
+
+On the tested laptop, a battery-powered run measured about 37.8 FPS with GPU
+power/thermal limits active and increasing CPU throttle counters. The user
+reported about 60 FPS again on AC power. Compare the same race and power/cooling
+conditions before attributing a regression to the renderer. No automatic power
+profile changes or clock overrides are applied.

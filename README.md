@@ -151,6 +151,12 @@ limited test on one machine, not a guarantee for all races or hardware. DLC
 compatibility and broader rendering correctness still need testing. Upstream
 Windows benchmarks are not Linux performance claims.
 
+Laptop performance can fall substantially on battery power. A local diagnostic
+run recorded active GPU power/thermal limiting and CPU thermal throttling; the
+tester reported approximately 60 FPS again on AC power. Use comparable power and
+cooling conditions when checking performance. Steam Deck performance remains
+unverified; this release does not promise 60 FPS on handhelds.
+
 ## Build and technical documentation
 
 For a complete local build without GitHub Actions, see
@@ -163,6 +169,8 @@ builds on Ubuntu 24.04. Successful runs provide an AppImage, checksum and
 `BUILD-INFO.txt` identifying the exact source commit. Version tags also trigger
 release builds. Development artifacts are available for 30 days; published release
 assets are available from the Releases page.
+Release 0.2.3 is built and checked locally; its publication does not require
+GitHub Actions build minutes.
 
 ## Credits and project lineage
 

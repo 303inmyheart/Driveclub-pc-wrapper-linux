@@ -157,7 +157,10 @@ def main():
                 writer.writerows(sorted(rows, key=lambda r: float(r['frame_ms']),
                                          reverse=True)[:30])
             for key in ('frame_ms', 'cp_busy_ms', 'cp_idle_ms', 'sched_wait_ms',
-                        'present_wait_ms', 'gpu_ms', 'present_hold_max_ms', 'download_cp_ms'):
+                        'present_wait_ms', 'gpu_ms', 'present_hold_max_ms',
+                        'present_acquire_max_ms', 'present_lock_wait_max_ms',
+                        'submit_lock_wait_max_ms', 'async_submit_lock_wait_max_ms',
+                        'download_cp_ms'):
                 samples = [float(row[key]) for row in rows if row.get(key)]
                 if samples:
                     summary.append(f'{key}: mean={statistics.mean(samples):.3f}, '
