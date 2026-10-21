@@ -62,6 +62,7 @@ struct Settings {
     // driveclub-pc: the game's own render scaling (render_res.h): 1080, 1440 or 2160 lines.
     int render_res = 1080;
     bool async_shaders = true; ///< shader translation and pipeline creation off-thread
+    bool frame_generation = false;
     bool show_fps = false;
     bool deferred_recording = false;
     bool classic_vblank = false;
@@ -115,6 +116,7 @@ Settings Load() {
         s.render_res = 1080;
     }
     s.async_shaders = num("async_shaders", 1) != 0;
+    s.frame_generation = num("frame_generation", 0) != 0;
     s.show_fps = num("show_fps", s.show_fps) != 0;
     s.deferred_recording = num("deferred_recording", s.deferred_recording) != 0;
     s.classic_vblank = num("classic_vblank", s.classic_vblank) != 0;
@@ -142,6 +144,7 @@ void Save(const Settings& s) {
         << "pcore_pin=" << int(s.pcore_pin) << "\n"
         << "render_res=" << s.render_res << "\n"
         << "async_shaders=" << int(s.async_shaders) << "\n"
+        << "frame_generation=" << int(s.frame_generation) << "\n"
         << "show_fps=" << int(s.show_fps) << "\n"
         << "deferred_recording=" << int(s.deferred_recording) << "\n"
         << "classic_vblank=" << int(s.classic_vblank) << "\n"
@@ -227,6 +230,7 @@ void ApplyRuntime(const Settings& s) {
     SetEnvDefault("DCPC_AF", std::to_string(s.af));
     SetEnvDefault("DCPC_AA", std::to_string(s.aa));
     SetEnvDefault("DCPC_PCORE_PIN", s.pcore_pin ? "1" : "0");
+    SetEnvDefault("DCPC_FRAME_GEN", s.frame_generation ? "1" : "0");
     SetEnvDefault("DCPC_ASYNC_SHADERS", s.async_shaders ? "1" : "0");
     SetEnvDefault("DCPC_ASYNC_PIPELINES", s.async_shaders ? "1" : "0");
     const auto out = TargetOutput(s);
@@ -342,6 +346,7 @@ enum Id : int {
     IdAa,
     IdPcore,
     IdAsyncShaders,
+    IdFrameGen,
     IdShowFps,
     IdDeferred,
     IdClassic,
@@ -523,6 +528,7 @@ void CollectSettings() {
     static constexpr int render_values[] = {1080, 1440, 2160};
     s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 2)];
     s.async_shaders = Checked(IdAsyncShaders);
+    s.frame_generation = Checked(IdFrameGen);
     s.show_fps = Checked(IdShowFps);
     s.deferred_recording = Checked(IdDeferred);
     s.classic_vblank = Checked(IdClassic);
@@ -677,6 +683,11 @@ void BuildControls() {
          BS_AUTOCHECKBOX | WS_TABSTOP, C, y, W, 22, IdAsyncShaders);
     SendMessageW(ui.controls[IdAsyncShaders], BM_SETCHECK,
                  s.async_shaders ? BST_CHECKED : BST_UNCHECKED, 0);
+    y += 26;
+    Make(L"BUTTON", L"Frame generation (FSR 3, experimental 2x)",
+         BS_AUTOCHECKBOX | WS_TABSTOP, C, y, W, 22, IdFrameGen);
+    SendMessageW(ui.controls[IdFrameGen], BM_SETCHECK,
+                 s.frame_generation ? BST_CHECKED : BST_UNCHECKED, 0);
     y += 26;
     Make(L"BUTTON", L"Show FPS counter", BS_AUTOCHECKBOX | WS_TABSTOP, C, y, W, 22, IdShowFps);
     SendMessageW(ui.controls[IdShowFps], BM_SETCHECK, s.show_fps ? BST_CHECKED : BST_UNCHECKED, 0);

@@ -75,6 +75,10 @@ public:
         return present_queue;
     }
 
+    vk::Queue GetPacedPresentQueue() const { return paced_present_queue; }
+    bool IsSubgroupSizeControlEnabled() const { return vk13_features.subgroupSizeControl; }
+    bool CanWriteStorageWithoutFormat() const { return features.shaderStorageImageWriteWithoutFormat; }
+
     TracyVkCtx GetProfilerContext() const {
         return profiler_context;
     }
@@ -527,6 +531,7 @@ private:
     vk::UniqueDebugUtilsMessengerEXT debug_callback{};
     std::string vendor_name;
     VmaAllocator allocator{};
+    vk::Queue paced_present_queue;
     vk::Queue present_queue;
     vk::Queue graphics_queue;
     std::vector<vk::PhysicalDevice> physical_devices;
