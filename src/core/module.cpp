@@ -3,6 +3,8 @@
 
 #include <fmt/format.h>
 #include "driveclub/fps_unlock.h"
+#include "driveclub/game_profile.h"
+#include "common/elf_info.h"
 #include "driveclub/render_res.h"
 #include "driveclub/widescreen.h"
 #include "common/alignment.h"
@@ -291,11 +293,14 @@ void Module::LoadModuleToMemory(u32& max_tls_index) {
             MemoryPatcher::g_eboot_image_size = base_size;
             MemoryPatcher::g_eboot_name = name;
             MemoryPatcher::OnGameLoaded();
-            // driveclub-pc: experimental render size (DCPC_RENDER_RES).
+            const auto& game = Common::ElfInfo::Instance();
+            if (!DriveclubPC::IsReferenceBuild(game.GameSerial(), game.AppVer())) {
+                LOG_WARNING(Loader, "Experimental {} / {}: attempting version-specific patches "
+                                    "only where expected bytes match",
+                            game.GameSerial(), game.AppVer());
+            }
             DriveclubPC::RenderRes::Apply(base_virtual_addr, base_size);
-            // driveclub-pc: ultrawide aspect, FOV and scene size (DCPC_WIDESCREEN).
             DriveclubPC::Widescreen::Apply(base_virtual_addr, base_size);
-            // driveclub-pc: 60 FPS unlock for the unmodified v1.28 eboot (DCPC_FPS_UNLOCK).
             DriveclubPC::FpsUnlock::Apply(base_virtual_addr, base_size);
         }
     }

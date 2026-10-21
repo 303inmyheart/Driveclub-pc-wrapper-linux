@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include "driveclub/game_profile.h"
 
 namespace DriveclubPC {
 
@@ -28,12 +29,15 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
 bool ValidateSysModules(std::string& error);
 
 // Describe unpacked DLCs for this title in either an addcont root or a direct DLC container.
-std::string DescribeAddonFolder(const std::filesystem::path& root);
+std::optional<std::string> GameTitleId(const std::filesystem::path& folder);
+std::string GameCompatibilityText(const std::filesystem::path& folder);
+std::string DescribeAddonFolder(const std::filesystem::path& root,
+                                std::string_view title_id = TitleId);
 
 // Writes the Driveclub per-game settings once, when the user has none: the GPU readback settings
 // recommended for the game (Precise/readbacks_mode=2, readback_offload=true), FSR 1 + RCAS, and
 // borderless fullscreen at the primary display's resolution.
-void EnsureDefaultGameConfig();
+void EnsureDefaultGameConfig(std::string_view title_id = TitleId);
 
 void ShowError(std::string_view message);
 

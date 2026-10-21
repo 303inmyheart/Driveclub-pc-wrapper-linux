@@ -89,7 +89,7 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
     const auto is_base = [](const std::filesystem::path& candidate) {
         std::error_code file_error;
         if (!std::filesystem::is_regular_file(candidate / "eboot.bin", file_error) ||
-            ReadSfoString(candidate, "TITLE_ID") != TitleId) {
+            !GameTitleId(candidate)) {
             return false;
         }
         const auto category = ReadSfoString(candidate, "CATEGORY");
@@ -102,13 +102,13 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
             return std::nullopt;
         }
         if (search.matches.size() > 1) {
-            error = "Several Driveclub installations were found. Select the one you want:";
+            error = "Several base game installations were found. Select the one you want:";
             for (const auto& match : search.matches) error += "\n" + match.string();
             return std::nullopt;
         }
         if (search.matches.empty()) {
-            error = fmt::format("No Driveclub base game ({}) found in this folder or its subfolders:\n{}",
-                                TitleId, folder.string());
+            error = fmt::format("No PS4 base game with a valid CUSA title ID found in this folder or its subfolders:\n{}",
+                                folder.string());
             return std::nullopt;
         }
         folder = search.matches.front();
@@ -125,9 +125,8 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
         error = fmt::format("sce_sys/param.sfo is missing or unreadable in\n{}", folder.string());
         return std::nullopt;
     }
-    if (*title_id != TitleId) {
-        error = fmt::format("This folder holds {}, not Driveclub ({}):\n{}", *title_id, TitleId,
-                            folder.string());
+    if (!IsValidGameTitleId(*title_id)) {
+        error = "Invalid TITLE_ID in sce_sys/param.sfo (expected CUSA followed by five digits).";
         return std::nullopt;
     }
 
@@ -135,6 +134,11 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
     for (const auto suffix : {"-UPDATE", "-patch"}) {
         const auto candidate = Core::FileSys::OverlayPath(folder, suffix);
         if (std::filesystem::is_directory(candidate, ec)) {
+            if (ReadSfoString(candidate, "TITLE_ID") != title_id) {
+                error = fmt::format("Update metadata is missing or its title ID does not match {}:\n{}",
+                                    *title_id, candidate.string());
+                return std::nullopt;
+            }
             update = candidate;
             break;
         }
@@ -142,20 +146,42 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
     const auto base_version = ReadSfoString(folder, "APP_VER").value_or("?");
     const auto update_version =
         update ? ReadSfoString(*update, "APP_VER").value_or("?") : std::string("none");
-    LOG_INFO(Loader, "{}: {} base {} (APP_VER {}), update {} (APP_VER {})", AppName, TitleId,
+    LOG_INFO(Loader, "{}: {} base {} (APP_VER {}), update {} (APP_VER {})", AppName, *title_id,
              folder.string(), base_version, update ? update->string() : "not found",
              update_version);
-    if (update_version != TargetAppVersion) {
-        LOG_WARNING(Loader,
-                    "{}: tested with update {}; this installation runs {}. Expect differences.",
-                    AppName, TargetAppVersion, update ? update_version : base_version);
+    if (!IsReferenceBuild(*title_id, update ? update_version : base_version)) {
+        LOG_WARNING(Loader, "{}", GameCompatibilityText(folder));
     }
     return eboot;
 }
 
-std::string DescribeAddonFolder(const std::filesystem::path& root) {
+std::optional<std::string> GameTitleId(const std::filesystem::path& folder) {
+    const auto id = ReadSfoString(folder, "TITLE_ID");
+    return id && IsValidGameTitleId(*id) ? id : std::nullopt;
+}
+
+std::string GameCompatibilityText(const std::filesystem::path& folder) {
+    const auto id = GameTitleId(folder).value_or("unknown");
+    auto version = ReadSfoString(folder, "APP_VER").value_or("unknown");
+    for (const auto suffix : {"-UPDATE", "-patch"}) {
+        const auto update = Core::FileSys::OverlayPath(folder, suffix);
+        std::error_code ec;
+        if (std::filesystem::is_directory(update, ec)) {
+            version = ReadSfoString(update, "APP_VER").value_or("unknown");
+            break;
+        }
+    }
+    return IsReferenceBuild(id, version)
+        ? fmt::format("{} / {}: reference Driveclub build.", id, version)
+        : fmt::format("EXPERIMENTAL: {} / {}. Only CUSA00093 / 01.28 has been tested. "
+                      "Compatibility and timing are unverified. FPS, render-size and ultrawide patches "
+                      "are attempted when their expected bytes match; unmatched patches are skipped. "
+                      "This is a Driveclub port, not a general game-compatibility guarantee.", id, version);
+}
+
+std::string DescribeAddonFolder(const std::filesystem::path& root, std::string_view title_id) {
     std::error_code ec;
-    const auto folder = Common::FS::AddonContentPath(root, TitleId);
+    const auto folder = Common::FS::AddonContentPath(root, title_id);
     if (!std::filesystem::is_directory(folder, ec)) {
         return "No DLC folder found (optional). Choose a folder with unpacked DLCs.";
     }
@@ -166,7 +192,7 @@ std::string DescribeAddonFolder(const std::filesystem::path& root) {
         const auto category = ReadSfoString(it->path(), "CATEGORY");
         const auto content_id = ReadSfoString(it->path(), "CONTENT_ID");
         if (category && category->starts_with("ac") && content_id &&
-            content_id->find(fmt::format("-{}_", TitleId)) != std::string::npos) {
+            content_id->find(fmt::format("-{}_", title_id)) != std::string::npos) {
             ++count;
         }
         it.increment(ec);
@@ -189,9 +215,10 @@ bool ValidateSysModules(std::string& error) {
     return false;
 }
 
-void EnsureDefaultGameConfig() {
+void EnsureDefaultGameConfig(std::string_view title_id) {
+    if (!IsValidGameTitleId(title_id)) return;
     const auto path = Common::FS::GetUserPath(Common::FS::PathType::CustomConfigs) /
-                      fmt::format("{}.json", TitleId);
+                      fmt::format("{}.json", title_id);
     std::error_code ec;
     if (std::filesystem::exists(path, ec)) {
         return;
@@ -243,6 +270,8 @@ std::string UsageText() {
 #endif
     return fmt::format("{} runs the PS4 version of Driveclub ({}, update {}).\n\n"
                        "Usage: {} <Driveclub base game folder>\n\n"
+                       "Other CUSA title IDs and game versions are EXPERIMENTAL and unverified.\n"
+                       "Experimental versions also attempt binary patches after byte checks.\n"
                        "The update must sit next to it as <folder>-UPDATE or <folder>-patch.\n"
                        "Settings and saves are kept in:\n{}",
                        AppName, TitleId, TargetAppVersion, executable,

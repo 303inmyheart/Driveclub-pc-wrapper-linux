@@ -6,7 +6,7 @@
 // It picks the game folder, imports the user's own firmware modules, and sets the frame rate,
 // display mode, resolution, upscaling and a few runtime options. Launcher settings live in
 // user/driveclub_pc.ini; the graphics ones are written into the per-game emulator settings
-// (user/custom_configs/CUSA00093.json), so they also apply when the game folder is passed on
+// (user/custom_configs/<selected-title-id>.json), so they also apply when the game folder is passed on
 // the command line. Hold Shift while starting to open the window even when it is turned off.
 
 #pragma once

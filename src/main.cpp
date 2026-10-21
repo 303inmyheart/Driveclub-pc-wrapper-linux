@@ -282,7 +282,12 @@ int main(int argc, char* argv[]) {
         DriveclubPC::ShowError(launch_error);
         return 1;
     }
-    DriveclubPC::EnsureDefaultGameConfig();
+    const auto selected_title = DriveclubPC::GameTitleId(driveclub_eboot->parent_path());
+    if (!selected_title) {
+        DriveclubPC::ShowError("Game metadata changed after validation; select the game again.");
+        return 1;
+    }
+    DriveclubPC::EnsureDefaultGameConfig(*selected_title);
     ebootPath = *driveclub_eboot;
 
     auto* emulator = Common::Singleton<Core::Emulator>::Instance();

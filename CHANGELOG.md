@@ -9,6 +9,25 @@ rendering and Driveclub optimisation credits remain with their authors.
 The original Windows history is preserved in
 [driveclub-pc/CHANGES.md](driveclub-pc/CHANGES.md).
 
+## Unreleased
+
+- Add 720p internal rendering to the launcher, settings persistence and engine
+  scaling, including 1280x720 at 16:9 and aspect-aware ultrawide output.
+- Remove the CUSA00093-only launch restriction. Other valid CUSA IDs and game
+  versions are allowed with an explicit experimental warning. CUSA00093 / 01.28
+  remains the tested reference; this does not establish support for other games.
+- Use the selected title ID for per-game settings and external DLC discovery,
+  and reject adjacent updates with mismatching or unreadable title metadata.
+- Attempt FPS, render-size, heap and ultrawide patches on experimental builds
+  too, checking the expected bytes before each patch group. Resolution changes
+  are validated as a whole before writing, preventing partial instruction-group
+  patches. Mismatching groups are skipped, not relocated or forced onto unknown
+  bytes; unsupported executable layouts can therefore remain unpatched.
+- Add profile/scaling/patch-transaction regression checks and headless launch
+  fixtures for alternate IDs, old builds and matching/mismatching updates.
+- Extend local profiling with frame percentiles, long-frame exports and isolated
+  queue/parallel-recording comparisons. These experiments remain off by default.
+
 ## 0.2.2 — 2026-10-21
 
 First regular Linux release, based on upstream Driveclub-PC 0.2.1.

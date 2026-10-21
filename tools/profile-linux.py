@@ -10,6 +10,8 @@ import statistics
 import subprocess
 import tempfile
 
+from frame_times import valid_rows, metrics, format_metrics
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -17,20 +19,22 @@ def main():
     parser.add_argument('--appimage', required=True, type=Path)
     parser.add_argument('--prepare-only', action='store_true')
     parser.add_argument('--experiment', action='store_true',
-                        help='Queue-skip patch plus alternating direct/parallel Vulkan recording')
+                        help='Alternate direct/parallel Vulkan recording with other experiments disabled')
     parser.add_argument('--readback-experiment', action='store_true',
                         help='Alternate precise readback prefetch off/on every ten seconds')
+    parser.add_argument('--queue-experiment', action='store_true',
+                        help='Alternate empty command-queue skipping off/on every ten seconds')
     parser.add_argument('--prefetch', choices=('off', 'on'),
                         help='Fixed prefetch setting for separate-process comparisons')
     parser.add_argument('--low-resolution', action='store_true',
                         help='Diagnostic 1280x720 rendering with the engine resolution-scale option')
     args = parser.parse_args()
-    if args.experiment and args.readback_experiment:
+    if sum([args.experiment, args.readback_experiment, args.queue_experiment]) > 1:
         parser.error('Choose only one alternating experiment')
-    if args.prefetch and (args.experiment or args.readback_experiment or args.low_resolution):
+    if args.prefetch and (args.experiment or args.readback_experiment or args.queue_experiment or args.low_resolution):
         parser.error('--prefetch requires a fixed 1080p comparison without other experiments')
     readback_test = args.readback_experiment or args.prefetch is not None
-    ab_test = args.experiment or args.readback_experiment
+    ab_test = args.experiment or args.readback_experiment or args.queue_experiment
     image = args.appimage.expanduser().resolve(strict=True)
     source = Path(os.environ.get('DCPC_USER_DIR') or
                   str(Path(os.environ.get('XDG_DATA_HOME') or str(Path.home() / '.local/share')) /
@@ -39,7 +43,7 @@ def main():
         parser.error(f'Launcher settings missing: {source}')
     root = Path.home() / 'Downloads' / 'Driveclub-FPS-Tests'
     root.mkdir(parents=True, exist_ok=True)
-    suffix = (f'-prefetch-{args.prefetch}-' if args.prefetch else '-readback-ab-' if args.readback_experiment else '-experiment-'
+    suffix = ('-queue-ab-' if args.queue_experiment else f'-prefetch-{args.prefetch}-' if args.prefetch else '-readback-ab-' if args.readback_experiment else '-experiment-'
               if args.experiment else '-720p-' if args.low_resolution else '-')
     run = Path(tempfile.mkdtemp(prefix=args.mode + suffix, dir=root))
     data = run / 'data'
@@ -84,7 +88,7 @@ def main():
     (run / 'TEST-INFO.txt').write_text(
         f'Mode: {args.mode}, low resolution: {args.low_resolution}, '
         f'experiment: {args.experiment}, readback experiment: {args.readback_experiment}, '
-        f'fixed prefetch: {args.prefetch}\nAppImage: {image}\nOriginal data: {source}\n'
+        f'fixed prefetch: {args.prefetch}, queue experiment: {args.queue_experiment}\nAppImage: {image}\nOriginal data: {source}\n'
         'Target: 60 FPS, classic pacing off. Original settings and saves are preserved.\n'
         'Run the same race for at least 60 seconds, then close the game normally.\n')
     print(f'Testdaten und Ergebnisse: {run}', flush=True)
@@ -95,8 +99,12 @@ def main():
     env.update(DCPC_USER_DIR=str(data), DCPC_PROFILE='1', DCPC_TARGET_FPS='60',
                DCPC_CLASSIC_VBLANK='0', APPIMAGE_EXTRACT_AND_RUN='1')
     if args.experiment:
-        env.update(DCPC_CP_EMPTY_SKIP='1', DCPC_DEFERRED_RECORDING='2',
-                   DCPC_VK_STATS='1', DCPC_GUEST_STATS='1')
+        env.update(DCPC_CP_EMPTY_SKIP='0', DCPC_DEFERRED_RECORDING='2',
+                   DCPC_DEFERRED_RECORDING_PERIOD_S='10', DCPC_READBACK_PREFETCH='0',
+                   DCPC_READBACK_AB='0', DCPC_READBACK_REDIRECT='0',
+                   DCPC_CP_SCHED_AB='0', DCPC_PERF='0', DCPC_WRITE_WINDOW_AB='0',
+                   DCPC_READBACK_HYBRID='0', DCPC_READBACK_HYBRID_AB='0',
+                   DCPC_VK_STATS='0', DCPC_GUEST_STATS='0')
     if readback_test:
         env.update(DCPC_CP_EMPTY_SKIP='0', DCPC_DEFERRED_RECORDING='0',
                    DCPC_READBACK_PREFETCH='0' if args.prefetch == 'off' else '1',
@@ -104,10 +112,16 @@ def main():
                    DCPC_READBACK_REDIRECT='0', DCPC_CP_SCHED_AB='0',
                    DCPC_PERF='0', DCPC_WRITE_WINDOW_AB='0',
                    DCPC_READBACK_HYBRID='0', DCPC_READBACK_HYBRID_AB='0')
+    if args.queue_experiment:
+        env.update(DCPC_CP_EMPTY_SKIP='2', DCPC_DEFERRED_RECORDING='0',
+                   DCPC_READBACK_PREFETCH='0', DCPC_READBACK_AB='0',
+                   DCPC_READBACK_REDIRECT='0', DCPC_CP_SCHED_AB='0',
+                   DCPC_PERF='0', DCPC_WRITE_WINDOW_AB='0',
+                   DCPC_READBACK_HYBRID='0', DCPC_READBACK_HYBRID_AB='0')
     if args.low_resolution:
         env.update(DCPC_RENDER_RES='1280x720', DCPC_GAME_ARGS='-resolutionscale 0.666667',
                    DCPC_WIDESCREEN='', DCPC_VRAM_EXTRA_MB='0')
-    seconds = 120 if readback_test else 90 if args.experiment else 60
+    seconds = 120 if readback_test or ab_test else 60
     print(f'Bitte dieselbe Rennsituation mindestens {seconds} Sekunden testen '
           'und danach das Spiel schließen.', flush=True)
     with (run / 'console.log').open('w') as output:
@@ -118,11 +132,18 @@ def main():
     if profile.exists():
         with profile.open() as stream:
             rows = list(csv.DictReader(stream))
-        rows = [row for row in rows if row.get('frame_ms') and row.get('qpc_ms')]
+        rows = valid_rows(rows)
         if rows:
             end = float(rows[-1]['qpc_ms'])
-            rows = [row for row in rows if float(row['qpc_ms']) >= end - 60000]
-            summary.append('Last 60 seconds; includes any menus/loading in that interval.')
+            window_seconds = 120 if args.queue_experiment or args.experiment else 60
+            rows = [row for row in rows if float(row['qpc_ms']) >= end - window_seconds * 1000]
+            summary.append(f'Last {window_seconds} seconds; includes menus/loading in that interval.')
+            summary.extend(format_metrics(metrics(rows)))
+            with (run / 'LONGEST-FRAMES.csv').open('w') as output:
+                writer = csv.DictWriter(output, fieldnames=list(rows[0]), extrasaction='ignore')
+                writer.writeheader()
+                writer.writerows(sorted(rows, key=lambda r: float(r['frame_ms']),
+                                         reverse=True)[:30])
             for key in ('frame_ms', 'cp_busy_ms', 'cp_idle_ms', 'sched_wait_ms',
                         'present_wait_ms', 'gpu_ms', 'present_hold_max_ms', 'download_cp_ms'):
                 samples = [float(row[key]) for row in rows if row.get(key)]
@@ -148,13 +169,16 @@ def main():
                     frames = [float(row['frame_ms']) for row in samples
                               if float(row['frame_ms']) > 0]
                     if frames:
-                        if args.readback_experiment:
+                        if args.queue_experiment:
+                            label = 'queue skip on' if phase else 'queue skip off'
+                        elif args.readback_experiment:
                             label = 'prefetch on' if phase else 'prefetch off'
                         else:
                             label = 'parallel recording' if phase else 'direct recording'
                         summary.append(f'Phase {phase} ({label}): '
                                        f'{1000 / statistics.mean(frames):.2f} FPS, '
                                        f'{len(frames)} frames')
+                        summary.extend('  ' + line for line in format_metrics(metrics(samples)))
                         for key in ('sched_wait_ms', 'download_cp_ms', 'readback_record_cp_ms',
                                     'cp_busy_ms', 'cp_idle_ms'):
                             values = [float(row[key]) for row in samples if row.get(key)]

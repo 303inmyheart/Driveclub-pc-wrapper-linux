@@ -63,6 +63,7 @@ jobs:
           ./tools/test-content-paths.sh
           ./tools/test-recorder-wake.sh
           ./tools/test-linux-cpu-topology.sh
+          ./tools/test-game-profile.sh
 
       - name: Validate desktop metadata
         run: |
@@ -84,6 +85,7 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 DCPC_USER_DIR="$RUNNER_TEMP/driveclub-smoke" \
             "${images[0]}" --help > "$RUNNER_TEMP/driveclub-help.txt"
           grep -q -- '--launcher' "$RUNNER_TEMP/driveclub-help.txt"
+          python3 tools/test-launch-validation.py --binary "${images[0]}"
           (
             cd dist
             sha256sum --check ./*.sha256

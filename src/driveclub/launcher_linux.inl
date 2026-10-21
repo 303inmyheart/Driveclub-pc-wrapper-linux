@@ -57,6 +57,11 @@ bool ShowLinuxWindow(Settings& s) {
     std::string game_status, firmware_status, import_status;
     std::string dlc_status;
     bool game_ok = false, firmware_ok = false;
+    const auto refresh_dlc = [&] {
+        const auto folder = dlc[0] ? fs::path(dlc.data()) :
+            Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "addcont";
+        dlc_status = DescribeAddonFolder(folder, GameTitleId(s.game_dir).value_or(std::string(TitleId)));
+    };
     const auto refresh = [&] {
         s.game_dir = game.data();
         game_status.clear();
@@ -67,7 +72,7 @@ bool ShowLinuxWindow(Settings& s) {
             game_status = "Choose Driveclub or a containing folder. Subfolders are searched automatically.";
         } else if (game_ok) {
             s.game_dir = resolved->parent_path().string();
-            game_status = fmt::format("Driveclub found: {}", s.game_dir);
+            game_status = GameCompatibilityText(s.game_dir) + "\n" + s.game_dir;
             bool update_found = false;
             for (const auto suffix : {"-UPDATE", "-patch"}) {
                 const auto update = fs::path(s.game_dir + suffix);
@@ -84,14 +89,9 @@ bool ShowLinuxWindow(Settings& s) {
         if (!firmware_ok) {
             firmware_status = "Import your PS4 sys_modules folder to continue.";
         }
+        refresh_dlc();
     };
     refresh();
-    const auto refresh_dlc = [&] {
-        const auto folder = dlc[0] ? fs::path(dlc.data()) :
-            Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "addcont";
-        dlc_status = DescribeAddonFolder(folder);
-    };
-    refresh_dlc();
     const auto persist = [&] {
         refresh();
         std::error_code ec;
@@ -157,7 +157,10 @@ bool ShowLinuxWindow(Settings& s) {
         if (ImGui::Button("Browse...")) {
             folder_dialog("dcpc-game", "Choose Driveclub or a containing folder");
         }
+        if (game_status.starts_with("EXPERIMENTAL"))
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.25f, 1.0f));
         ImGui::TextWrapped("%s", game_status.c_str());
+        if (game_status.starts_with("EXPERIMENTAL")) ImGui::PopStyleColor();
         ImGui::TextUnformatted("DLC folder (optional)");
         ImGui::SetNextItemWidth(-110 * scale);
         const bool dlc_enter = ImGui::InputText("##dlc", dlc.data(), dlc.size(),
@@ -181,8 +184,8 @@ bool ShowLinuxWindow(Settings& s) {
                     "30 FPS\00060 FPS\000120 FPS (experimental)\000");
         ImGui::Combo("Presentation", &s.present_mode,
                      "Immediate (may tear)\000Mailbox (VSync)\000FIFO (VSync)\000");
-        combo_value("Render resolution", s.render_res, std::array{1080, 1440, 2160},
-                    "1080p\0001440p\0002160p\000");
+        combo_value("Render resolution", s.render_res, std::array{720, 1080, 1440, 2160},
+                    "720p (lower GPU load)\0001080p\0001440p\0002160p\000");
         ImGui::Checkbox("Borderless fullscreen", &s.fullscreen);
         ImGui::BeginDisabled(s.fullscreen);
         static constexpr std::array sizes{

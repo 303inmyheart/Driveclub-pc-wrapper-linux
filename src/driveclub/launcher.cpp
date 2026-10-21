@@ -111,7 +111,7 @@ Settings Load() {
     s.aa = std::clamp(num("aa", s.aa), 0, 2);
     s.pcore_pin = num("pcore_pin", 1) != 0;
     s.render_res = num("render_res", s.render_res);
-    if (s.render_res != 1440 && s.render_res != 2160) {
+    if (!IsRenderResolution(s.render_res)) {
         s.render_res = 1080;
     }
     s.async_shaders = num("async_shaders", 1) != 0;
@@ -191,9 +191,11 @@ int ExtraVramMb(const Widescreen::Output& out) {
 
 /// Writes the graphics settings into the per-game emulator config, keeping its other keys.
 void WriteGameConfig(const Settings& s) {
-    EnsureDefaultGameConfig();
+    const auto title_id = GameTitleId(s.game_dir);
+    if (!title_id) return;
+    EnsureDefaultGameConfig(*title_id);
     const auto path = Common::FS::GetUserPath(Common::FS::PathType::CustomConfigs) /
-                      fmt::format("{}.json", TitleId);
+                      fmt::format("{}.json", *title_id);
     nlohmann::json json = nlohmann::json::object();
     {
         std::ifstream in(path);
@@ -251,8 +253,7 @@ void ApplyRuntime(const Settings& s) {
     if (out.height != 1080) {
         // The engine's own -resolutionscale switch scales its render targets (width aligned to
         // 128, height = width * 9 / 16, or table height * scale with widescreen).
-        SetEnvDefault("DCPC_GAME_ARGS",
-                      out.height == 2160 ? "-resolutionscale 2" : "-resolutionscale 1.3333");
+        SetEnvDefault("DCPC_GAME_ARGS", std::string(RenderScaleArgument(out.height)));
     }
     if (out.wide || out.height != 1080) {
         // The game's display buffers follow DCPC_RENDER_RES.
@@ -386,12 +387,12 @@ void RefreshStatus() {
     std::string message;
     if (dir.empty()) {
         ui.game_ok = false;
-        message = "Choose the Driveclub base game folder (CUSA00093).";
+        message = "Choose the Driveclub base game folder. Other title IDs are experimental.";
     } else {
         std::string error;
         const auto eboot = ResolveAndValidateGame(dir, error);
         ui.game_ok = eboot.has_value();
-        message = ui.game_ok ? "Driveclub found." : error;
+        message = ui.game_ok ? GameCompatibilityText(eboot->parent_path()) : error;
     }
     std::replace(message.begin(), message.end(), '\n', ' ');
     SetText(IdGameStatus, message);
@@ -451,8 +452,8 @@ void CollectSettings() {
     s.af = af_values[std::clamp(ComboIndex(IdAf), 0, 4)];
     s.aa = std::clamp(ComboIndex(IdAa), 0, 2);
     s.pcore_pin = Checked(IdPcore);
-    static constexpr int render_values[] = {1080, 1440, 2160};
-    s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 2)];
+    static constexpr int render_values[] = {720, 1080, 1440, 2160};
+    s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 3)];
     s.async_shaders = Checked(IdAsyncShaders);
     s.show_fps = Checked(IdShowFps);
     s.deferred_recording = Checked(IdDeferred);
@@ -550,11 +551,12 @@ void BuildControls() {
     // driveclub-pc: lines; the width follows the display (or window) aspect, see widescreen.h.
     Label(L"Render resolution", L, y, 140);
     Combo(IdRenderRes, C, y, W,
-          {L"1080p (native, fastest)", L"1440p (sharper, about 10-15% slower)",
+          {L"720p (lower GPU load)", L"1080p (native)", L"1440p (sharper, about 10-15% slower)",
            L"2160p (very demanding)"},
-          s.render_res == 2160   ? 2
-          : s.render_res == 1440 ? 1
-                                 : 0);
+          s.render_res == 2160   ? 3
+          : s.render_res == 1440 ? 2
+          : s.render_res == 720  ? 0
+                                 : 1);
     y += Row;
 
     Label(L"Upscaling", L, y, 140);
@@ -647,7 +649,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         SetTextColor(dc, RGB(90, 90, 90));
         RECT r2{Px(24), Px(44), Px(600), Px(64)};
         DrawTextW(dc,
-                  L"PS4 Driveclub (CUSA00093). Settings and saves: the 'user' folder next to the "
+                  L"PS4 Driveclub. Other versions are experimental. Settings and saves: the 'user' folder next to the "
                   L"program.",
                   -1, &r2, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
         SelectObject(dc, old);
@@ -659,7 +661,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IdBrowse:
-            if (const auto dir = PickFolder(hwnd, L"Driveclub base game folder (CUSA00093)")) {
+            if (const auto dir = PickFolder(hwnd, L"Driveclub base game folder (other versions experimental)")) {
                 SetWindowTextW(g_ui->controls[IdGameEdit], dir->c_str());
             }
             return 0;

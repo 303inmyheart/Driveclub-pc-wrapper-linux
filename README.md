@@ -30,7 +30,9 @@ Preview releases are intended for local testing.
 - x86_64 Linux with an AVX2-capable CPU (x86-64-v3).
 - **glibc 2.39 or newer** for the published builds.
 - A Vulkan-capable GPU and working graphics drivers.
-- Your own **Driveclub CUSA00093** base-game dump with **update 1.28**, and PS4 system modules from your own console.
+- Your own Driveclub dump and PS4 system modules from your own console.
+  **CUSA00093 with update 1.28** is the tested reference; other title IDs and
+  game versions can be launched but are explicitly **experimental**.
 
 ### Distribution compatibility
 
@@ -80,11 +82,11 @@ In the launcher:
 1. Choose the **game folder**. You can select the base-game folder directly or a
    containing folder such as `Drive Club`; subfolders are searched recursively.
    If several installations are found, select a more specific folder.
-2. Keep update **1.28** next to the resolved base-game folder, named
+2. Keep the matching update next to the resolved base-game folder, named
    `<base folder>-patch` or `<base folder>-UPDATE`.
 3. Use **Import firmware...** to import `.sprx` system modules from your console dump.
 4. Optionally select your own **DLC folder**. Both an `addcont` root containing
-   `CUSA00093/<DLC>/sce_sys/param.sfo` and a folder directly containing
+   `<selected title ID>/<DLC>/sce_sys/param.sfo` and a folder directly containing
    `<DLC>/sce_sys/param.sfo` are supported. DLC stays in the chosen location;
    PKG files must be unpacked first.
 5. Choose graphics, display and frame-rate settings, then press **Play**.
@@ -129,7 +131,17 @@ improvements originate upstream; see the
 The original README is preserved as historical upstream documentation and describes
 the Windows version, including its Windows performance results.
 
-The Linux build targets **CUSA00093 with update 1.28**. Successful CI checks cover
+The tested reference is **CUSA00093 with update 1.28**. Other CUSA IDs and game
+versions are allowed and visibly marked **EXPERIMENTAL**. Settings and DLC lookup
+follow the selected title ID. FPS, resolution and ultrawide patches are attempted
+on these versions too, but only when the expected bytes at their known locations
+match; unmatched patch groups are skipped. Offsets are not automatically relocated,
+so compatibility, correct game speed and every setting are not guaranteed.
+
+Render resolution includes **720p**, 1080p, 1440p and 2160p. 720p uses the engine's
+resolution scaling and matching render-size patch; native 16:9 output is 1280x720.
+
+Successful CI checks cover
 content-path regression tests, desktop metadata, packaged `--help` startup and
 SHA-256 checksums. Local CPU-fix builds have also been race-tested on an Intel
 Core Ultra 7 155H with an NVIDIA RTX 4050 Laptop GPU: two separate 1080p test

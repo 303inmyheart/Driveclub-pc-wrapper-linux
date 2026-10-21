@@ -26,17 +26,16 @@ chmod +x Driveclub-PC-*-x86_64.AppImage
 ./Driveclub-PC-*-x86_64.AppImage
 ```
 
-Choose your own **CUSA00093** base game folder or a containing folder such as
+Choose your own Driveclub base game folder or a containing folder such as
 `Drive Club`. Subfolders are searched recursively; update/mod folders are
 excluded as base-game candidates. If multiple installations are found, choose
 a more specific folder. The resolved base folder is saved automatically.
-Keep update **1.28** next to it
-as `<base folder>-UPDATE` or `<base folder>-patch`. Use **Import firmware...**
+Keep the matching update next to it as `<base folder>-UPDATE` or `<base folder>-patch`. Use **Import firmware...**
 to copy `.sprx` modules from your own console dump. Existing modules are kept.
 No game or firmware files are included.
 
 **DLC folder (optional)** lets you select an external folder without copying its
-contents. Both `addcont/CUSA00093/<DLC>/sce_sys/param.sfo` and a directly chosen
+contents. Both `addcont/<selected title ID>/<DLC>/sce_sys/param.sfo` and a directly chosen
 folder containing `<DLC>/sce_sys/param.sfo` are supported. The launcher counts
 matching unpacked DLC folders; PKG files must be unpacked first. The selected
 path is saved in `config.json` as `General.addon_install_dir`.
@@ -44,8 +43,16 @@ path is saved in `config.json` as `General.addon_install_dir`.
 If the machine has no FUSE support, run with
 `APPIMAGE_EXTRACT_AND_RUN=1 ./Driveclub-PC-…-x86_64.AppImage`.
 
+**CUSA00093 / update 1.28 is the tested reference. Other CUSA IDs and versions are
+EXPERIMENTAL**, with a persistent highlighted launcher warning. The selected ID is
+used for per-game settings and DLC filtering. Updates must carry the same title ID
+as the base game. FPS, render-size and ultrawide patches are attempted for other
+versions too after expected-byte checks. A mismatching resolution patch group is
+skipped without partial writes; unsupported offsets are not searched/relocated.
+Correct timing and compatibility on other versions are not established.
+
 The launcher supports keyboard navigation, folder selection, 30/60/120 FPS,
-windowed/borderless display, render resolution, ultrawide, FSR, sharpening,
+windowed/borderless display, 720p/1080p/1440p/2160p render resolution, ultrawide, FSR, sharpening,
 FXAA/SMAA, anisotropic filtering and shader compilation options.
 Use `./Driveclub-PC-…-x86_64.AppImage --launcher` to reopen settings after
 disabling the startup window.
@@ -144,10 +151,10 @@ python3 tools/profile-linux.py immediate --appimage /path/to/Driveclub-PC.AppIma
 ```
 
 `--low-resolution` requests diagnostic 720p rendering. With a build containing
-the Linux queue/recorder changes, `--experiment` enables empty-queue skipping
-and alternates direct and parallel Vulkan recording every ten seconds. Run the
-same race for at least 90 seconds and close normally. `SUMMARY.txt` reports the
-last 60 seconds and separates recording phases, excluding the first second
+the Linux queue/recorder changes, `--experiment` alternates direct and parallel Vulkan recording every ten seconds while
+queue skipping and prefetch remain off. Run the same race for at least 120
+seconds and close normally. `SUMMARY.txt` reports the last 120 seconds and
+separates recording phases, excluding the first second
 after each switch. This is a diagnostic comparison, not a promised speedup.
 
 The optional command-queue optimisation skips queues whose release-published
@@ -172,3 +179,27 @@ For independent-process readback comparisons, use `--prefetch off` and
 Each run fixes 1080p, Precise readbacks and disables alternating experiments.
 The local comparison reached 59.75 / 59.90 FPS respectively, so prefetch has
 not demonstrated a meaningful FPS gain and is not enabled in normal builds.
+
+### Frame-time investigation
+
+`python3 tools/frame_times.py /path/to/frame_profile.csv` reports nearest-rank
+p50/p95/p99/p99.9 frame durations and counts above 25, 33.333 and 50 ms. The
+normal window is the last 60 seconds; change it with `--seconds`. Partial or
+non-finite frame records are excluded. Inclusive CPU/GPU timing scopes overlap;
+these columns do not measure hardware utilisation.
+
+`tools/profile-linux.py immediate --queue-experiment --appimage /path/to/image`
+alternates empty-command-queue skipping every ten seconds, holding prefetch and
+parallel recording off. Test a demanding race for at least two minutes and
+close directly from gameplay. This comparison uses the final 120 seconds,
+excludes the first second after each phase change and writes per-phase frame
+percentiles plus `LONGEST-FRAMES.csv`. Scene progression and rare spikes can
+still affect a single A/B run; check repeatability before enabling a default.
+
+720p uses `-resolutionscale 0.666667` plus the in-memory render-size patch.
+At 16:9 this requests 1280x720; ultrawide follows the selected display aspect.
+Changing only window size does not lower internal rendering resolution. The
+reference executable has been tested at 720p; other builds still depend on
+matching patch sites. Tests: `./tools/test-game-profile.sh` and
+`python3 tools/test-launch-validation.py --binary /path/to/Driveclub-PC`.
+The launch fixtures intentionally stop at missing firmware and execute no game.
