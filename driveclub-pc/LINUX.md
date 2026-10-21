@@ -4,6 +4,21 @@ This port targets **x86_64 Linux** with an AVX2-capable CPU (the existing
 `x86-64-v3` target) and a Vulkan-capable graphics driver. It runs the PS4 game
 through the bundled emulator; Wine and Proton are not required.
 
+## Distribution requirements
+
+The AppImage is **not restricted to Ubuntu or Ubuntu-based distributions**.
+Published builds are built on Ubuntu 24.04 and require **glibc 2.39 or newer**,
+an **x86_64-v3 / AVX2-capable CPU**, a working X11 or Wayland desktop, and
+Vulkan graphics drivers supplied by the host. Other distributions can work
+when these requirements are met, but cross-distribution operation has not yet
+been verified. Systems using musl instead of glibc are not supported by this build.
+
+Check the installed glibc version with `getconf GNU_LIBC_VERSION`.
+The AppImage bundles most application libraries and the C++ runtime; it does
+not bundle glibc or graphics drivers. FUSE is needed for normal mounting, or
+use `APPIMAGE_EXTRACT_AND_RUN=1` as shown below. Extraction mode does not remove
+the other system requirements.
+
 ## Run the AppImage
 
 ```sh

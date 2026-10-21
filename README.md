@@ -28,9 +28,36 @@ Download the `.AppImage` and its `.sha256` file from
 Preview releases are intended for local testing.
 
 - x86_64 Linux with an AVX2-capable CPU (x86-64-v3).
-- Ubuntu 24.04 or a compatible distribution with glibc 2.39 or newer for the published builds.
+- **glibc 2.39 or newer** for the published builds.
 - A Vulkan-capable GPU and working graphics drivers.
 - Your own **Driveclub CUSA00093** base-game dump with **update 1.28**, and PS4 system modules from your own console.
+
+### Distribution compatibility
+
+**The AppImage is not limited to Ubuntu or Ubuntu-based distributions.**
+Ubuntu 24.04 is the build environment. Other distributions can run the AppImage
+when they meet the requirements above; a distribution's name alone does not
+establish compatibility. Cross-distribution operation has not yet been verified.
+
+The AppImage bundles most application libraries, including the C++ runtime.
+Your system must provide glibc, a working graphical desktop (X11 or Wayland),
+and Vulkan graphics drivers. Check your system's glibc version with:
+
+```sh
+getconf GNU_LIBC_VERSION
+```
+
+Versions older than **2.39** are not supported by the current published build.
+Systems using musl instead of glibc are not supported by this build either.
+Normal AppImage mounting requires working FUSE support. If it is unavailable,
+use extraction mode instead:
+
+```sh
+APPIMAGE_EXTRACT_AND_RUN=1 ./Driveclub-PC-<build>-x86_64.AppImage
+```
+
+Extraction mode bypasses FUSE; the CPU, glibc and graphics-driver requirements
+still apply. No Wine or Proton installation is needed.
 
 **No game data, DLC, firmware or Sony code is included.**
 This is an unofficial project, unaffiliated with Sony Interactive Entertainment,
