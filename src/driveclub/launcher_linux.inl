@@ -60,7 +60,7 @@ bool ShowLinuxWindow(Settings& s) {
     const auto refresh_dlc = [&] {
         const auto folder = dlc[0] ? fs::path(dlc.data()) :
             Common::FS::GetUserPath(Common::FS::PathType::UserDir) / "addcont";
-        dlc_status = DescribeAddonFolder(folder, GameTitleId(s.game_dir).value_or(std::string(TitleId)));
+        dlc_status = DescribeAddonFolder(folder, GameTitleId(s.game_dir).value_or(std::string(ReferenceTitleId)));
     };
     const auto refresh = [&] {
         s.game_dir = game.data();
@@ -184,18 +184,20 @@ bool ShowLinuxWindow(Settings& s) {
                     "30 FPS\00060 FPS\000120 FPS (experimental)\000");
         ImGui::Combo("Presentation", &s.present_mode,
                      "Immediate (may tear)\000Mailbox (VSync)\000FIFO (VSync)\000");
-        combo_value("Render resolution", s.render_res, std::array{720, 1080, 1440, 2160},
+        combo_value("Render resolution", s.render_res, std::array{480, 576, 720, 1080, 1440, 2160},
+                    "480p scene (experimental, native UI)\000576p scene (experimental, native UI)\000"
                     "720p scene (native UI)\0001080p\0001440p\0002160p\000");
         ImGui::Checkbox("Borderless fullscreen", &s.fullscreen);
         ImGui::BeginDisabled(s.fullscreen);
         static constexpr std::array sizes{
-            std::pair{0, 0}, std::pair{1280, 720}, std::pair{1920, 1080},
+            std::pair{0, 0}, std::pair{854, 480}, std::pair{1024, 576},
+            std::pair{1280, 720}, std::pair{1920, 1080},
             std::pair{2560, 1440}, std::pair{3840, 2160}, std::pair{2560, 1080},
             std::pair{3440, 1440}, std::pair{5120, 1440}};
         const auto selected = std::find(sizes.begin(), sizes.end(), std::pair{s.width, s.height});
         int size_index = selected == sizes.end() ? 0 : static_cast<int>(selected - sizes.begin());
         if (ImGui::Combo("Window size", &size_index,
-                         "Desktop\0001280 x 720\0001920 x 1080\0002560 x 1440\0003840 x 2160\000"
+                         "Desktop\000854 x 480\0001024 x 576\0001280 x 720\0001920 x 1080\0002560 x 1440\0003840 x 2160\000"
                          "2560 x 1080\0003440 x 1440\0005120 x 1440\000")) {
             s.width = sizes[size_index].first;
             s.height = sizes[size_index].second;

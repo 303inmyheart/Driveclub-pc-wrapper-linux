@@ -35,6 +35,13 @@ def main():
         sfo(root / 'reference/CUSA00093', 'CUSA00093')
         sfo(root / 'region/CUSA12345', 'CUSA12345')
         sfo(root / 'scene720/CUSA00093', 'CUSA00093')
+        for lines in (480, 576):
+            sfo(root / f'scene{lines}/CUSA00093', 'CUSA00093')
+        sfo(root / 'cusa00003/nested/CUSA00003', 'CUSA00003')
+        sfo(root / 'cusa00003-update/CUSA00003', 'CUSA00003', version='01.00')
+        sfo(root / 'cusa00003-update/CUSA00003-patch', 'CUSA00003', category='gp')
+        sfo(root / 'bad-metadata/CUSA00003', 'CUSA00003')
+        (root / 'bad-metadata/CUSA00003/sce_sys/param.sfo').write_bytes(b'broken metadata')
         sfo(root / 'old/CUSA00093', 'CUSA00093', version='01.27')
         sfo(root / 'mismatch/CUSA12345', 'CUSA12345')
         sfo(root / 'mismatch/CUSA12345-patch', 'CUSA00093', category='gp')
@@ -43,6 +50,13 @@ def main():
         sfo(root / 'invalid/bad', 'CUSA12A45')
         cases = [('reference', 'firmware modules', False),
                  ('scene720', 'Render policy: scene target 720p, output 1920x1080', False),
+                 ('scene480', 'Render policy: scene target 480p, output 1920x1080', False),
+                 ('scene576', 'Render policy: scene target 576p, output 1920x1080', False),
+                 ('cusa00003', 'firmware modules', True),
+                 ('cusa00003-update', 'firmware modules', True),
+                 ('cusa00003-patch-selection', 'firmware modules', True),
+                 ('cusa00003-executable-selection', 'firmware modules', True),
+                 ('bad-metadata', 'missing or unreadable TITLE_ID', False),
                  ('region', 'firmware modules', True), ('old', 'firmware modules', True),
                  ('matching', 'firmware modules', True),
                  ('mismatch', 'title ID does not match', False),
@@ -51,11 +65,16 @@ def main():
             env = os.environ.copy()
             env.update(DCPC_USER_DIR=str(root / ('data-' + name)), SDL_VIDEODRIVER='dummy',
                        SDL_VIDEO_DRIVER='dummy', APPIMAGE_EXTRACT_AND_RUN='1')
-            if name == 'scene720':
+            if name.startswith('scene'):
                 settings = Path(env['DCPC_USER_DIR'])
                 settings.mkdir()
-                (settings / 'driveclub_pc.ini').write_text('render_res=720\n')
-            result = subprocess.run([str(binary), '--game', str(root / name)], env=env,
+                (settings / 'driveclub_pc.ini').write_text(f'render_res={name[5:]}\n')
+            selection = root / name
+            if name == 'cusa00003-patch-selection':
+                selection = root / 'cusa00003-update/CUSA00003-patch'
+            elif name == 'cusa00003-executable-selection':
+                selection = root / 'cusa00003-update/CUSA00003-patch/eboot.bin'
+            result = subprocess.run([str(binary), '--game', str(selection)], env=env,
                                     text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     timeout=30)
             assert result.returncode == 1, (name, result.returncode, result.stdout[-1500:])

@@ -9,6 +9,8 @@
 int main() {
     using namespace DriveclubPC;
     assert(IsValidGameTitleId("CUSA00093"));
+    assert(IsValidGameTitleId("CUSA00003"));
+    assert(!IsReferenceBuild("CUSA00003", "01.28"));
     assert(IsValidGameTitleId("CUSA12345"));
     for (auto id : {"CUSA1234", "CUSA123456", "CUSA12A45", "../CUSA12", "CUSA/1234"})
         assert(!IsValidGameTitleId(id));
@@ -17,6 +19,16 @@ int main() {
     assert(!IsReferenceBuild("CUSA00093", "01.27"));
     assert(!IsReferenceBuild("CUSA00093", "unknown"));
     assert(IsRenderResolution(720) && IsRenderResolution(1080));
+    for (const auto lines : {480u, 576u}) {
+        assert(IsRenderResolution(lines));
+        assert(PresentationLines(lines) == 1080);
+        const auto output = Widescreen::ComputeOutput(1920, 1080, PresentationLines(lines));
+        assert(output.width == 1920 && output.height == 1080);
+        const auto ultra = Widescreen::ComputeOutput(3440, 1440, PresentationLines(lines));
+        assert(ultra.width == 2580 && ultra.height == 1080);
+    }
+    assert(RenderScaleArgument(480) == "-resolutionscale 0.444444");
+    assert(RenderScaleArgument(576) == "-resolutionscale 0.533333");
     assert(IsRenderResolution(1440) && IsRenderResolution(2160));
     assert(!IsRenderResolution(0) && !IsRenderResolution(900));
     assert(RenderScaleArgument(720) == "-resolutionscale 0.666667");

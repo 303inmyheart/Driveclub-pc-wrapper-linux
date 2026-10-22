@@ -9,6 +9,11 @@
 
 int main() {
     using namespace Common;
+    assert(!CanReservePhysicalCore(0));
+    assert(!CanReservePhysicalCore(2));
+    assert(!CanReservePhysicalCore(4)); // Steam Deck: SMT does not add physical cores.
+    assert(CanReservePhysicalCore(6));
+    assert(CanReservePhysicalCore(16));
     assert(ParseCpuListLinux("0-3,8-11\n") == 0xf0f);
     // Regression: a periodic walk runs on another thread. The GPU owner may have
     // widened from its reserved P-core to all P-cores and must not lose that core.

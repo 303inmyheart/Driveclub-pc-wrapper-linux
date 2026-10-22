@@ -61,7 +61,7 @@ struct Settings {
     int af = 16;
     int aa = 1;
     bool pcore_pin = true;
-    // driveclub-pc: the game's own render scaling (render_res.h): 1080, 1440 or 2160 lines.
+    // Scene resolution; below 1080p the menu/HUD framebuffer remains native.
     int render_res = 1080;
     bool async_shaders = true; ///< shader translation and pipeline creation off-thread
     bool show_fps = false;
@@ -250,7 +250,7 @@ void ApplyRuntime(const Settings& s) {
     SetEnvDefault("DCPC_ASYNC_SHADERS", s.async_shaders ? "1" : "0");
     SetEnvDefault("DCPC_ASYNC_PIPELINES", s.async_shaders ? "1" : "0");
     const auto out = TargetOutput(s);
-    const auto scene_lines = s.render_res == 720 ? 720u : out.height;
+    const auto scene_lines = s.render_res < 1080 ? static_cast<unsigned>(s.render_res) : out.height;
     if (scene_lines != 1080) {
         // Below native, scale the 3D targets only; leave the native UI/output buffers intact.
         // Above native, retain the established matched scene/output path and memory budget.
@@ -455,8 +455,8 @@ void CollectSettings() {
     s.af = af_values[std::clamp(ComboIndex(IdAf), 0, 4)];
     s.aa = std::clamp(ComboIndex(IdAa), 0, 2);
     s.pcore_pin = Checked(IdPcore);
-    static constexpr int render_values[] = {720, 1080, 1440, 2160};
-    s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 3)];
+    static constexpr int render_values[] = {480, 576, 720, 1080, 1440, 2160};
+    s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 5)];
     s.async_shaders = Checked(IdAsyncShaders);
     s.show_fps = Checked(IdShowFps);
     s.deferred_recording = Checked(IdDeferred);
@@ -554,12 +554,15 @@ void BuildControls() {
     // driveclub-pc: lines; the width follows the display (or window) aspect, see widescreen.h.
     Label(L"Render resolution", L, y, 140);
     Combo(IdRenderRes, C, y, W,
-          {L"720p scene (native UI)", L"1080p (native)", L"1440p (sharper, about 10-15% slower)",
+          {L"480p scene (experimental, native UI)", L"576p scene (experimental, native UI)",
+           L"720p scene (native UI)", L"1080p (native)", L"1440p (sharper, about 10-15% slower)",
            L"2160p (very demanding)"},
-          s.render_res == 2160   ? 3
-          : s.render_res == 1440 ? 2
-          : s.render_res == 720  ? 0
-                                 : 1);
+          s.render_res == 2160   ? 5
+          : s.render_res == 1440 ? 4
+          : s.render_res == 720  ? 2
+          : s.render_res == 576  ? 1
+          : s.render_res == 480  ? 0
+                                 : 3);
     y += Row;
 
     Label(L"Upscaling", L, y, 140);

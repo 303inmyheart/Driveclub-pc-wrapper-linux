@@ -15,8 +15,6 @@
 
 namespace DriveclubPC {
 
-constexpr std::string_view TitleId = "CUSA00093";
-constexpr std::string_view TargetAppVersion = "01.28";
 constexpr std::string_view AppName = "Driveclub-PC";
 
 // Accepts the base game folder, its update folder (<base>-UPDATE / <base>-patch) or an eboot.bin
@@ -32,12 +30,12 @@ bool ValidateSysModules(std::string& error);
 std::optional<std::string> GameTitleId(const std::filesystem::path& folder);
 std::string GameCompatibilityText(const std::filesystem::path& folder);
 std::string DescribeAddonFolder(const std::filesystem::path& root,
-                                std::string_view title_id = TitleId);
+                                std::string_view title_id = ReferenceTitleId);
 
 // Writes the Driveclub per-game settings once, when the user has none: the GPU readback settings
 // recommended for the game (Precise/readbacks_mode=2, readback_offload=true), FSR 1 + RCAS, and
 // borderless fullscreen at the primary display's resolution.
-void EnsureDefaultGameConfig(std::string_view title_id = TitleId);
+void EnsureDefaultGameConfig(std::string_view title_id = ReferenceTitleId);
 
 void ShowError(std::string_view message);
 

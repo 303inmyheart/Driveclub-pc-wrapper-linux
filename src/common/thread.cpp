@@ -639,6 +639,16 @@ ReservedCoreDecision DecideReservedCores() {
     constexpr u64 GUEST_MASK = (1ULL << 7) - 1; // the guest's CPUs 0..6
     const std::vector<CoreInfo> cores = EnumeratePhysicalCores(hw);
     if (cores.empty()) return result;
+#ifdef __linux__
+    if (!CanReservePhysicalCore(static_cast<unsigned>(cores.size()))) {
+        static std::once_flag log_once;
+        std::call_once(log_once, [&] {
+            LOG_INFO(Common, "Linux CPU policy: {} available physical cores; keeping all cores "
+                             "shared instead of reserving a graphics core", cores.size());
+        });
+        return result;
+    }
+#endif
     const u8 top_efficiency = cores.back().efficiency_class;
 
     {

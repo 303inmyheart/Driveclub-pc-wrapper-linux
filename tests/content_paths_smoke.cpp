@@ -56,6 +56,9 @@ int main() {
     const auto flat = root / "unpacked DLC collection";
     fs::create_directories(flat / "a DLC");
     assert(Common::FS::AddonContentPath(flat, "CUSA00093") == flat);
+    fs::create_directories(addons / "CUSA00003" / "region DLC");
+    assert(Common::FS::AddonContentPath(addons, "CUSA00003") == addons / "CUSA00003");
+    assert(Common::FS::AddonContentPath(addons / "CUSA00003", "CUSA00003") == addons / "CUSA00003");
     std::cout << "PASS: recursive discovery, overlays, payload pruning, symlink loops, ambiguity, "
                  "search limits and DLC container layouts\n";
 }

@@ -86,10 +86,21 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
     if (const auto base = Core::FileSys::BaseGameFromOverlay(folder)) {
         folder = *base;
     }
-    const auto is_base = [](const std::filesystem::path& candidate) {
+    std::vector<std::string> rejected;
+    const auto is_base = [&](const std::filesystem::path& candidate) {
         std::error_code file_error;
-        if (!std::filesystem::is_regular_file(candidate / "eboot.bin", file_error) ||
-            !GameTitleId(candidate)) {
+        if (!std::filesystem::is_regular_file(candidate / "eboot.bin", file_error)) {
+            return false;
+        }
+        const auto id = ReadSfoString(candidate, "TITLE_ID");
+        if (!id || !IsValidGameTitleId(*id)) {
+            if (rejected.size() < 8) {
+                const auto reason = id ? fmt::format("invalid TITLE_ID '{}' (expected CUSA + five digits)", *id)
+                                       : "missing or unreadable TITLE_ID in sce_sys/param.sfo";
+                const auto detail = fmt::format("{}: {}", candidate.string(), reason);
+                if (std::find(rejected.begin(), rejected.end(), detail) == rejected.end())
+                    rejected.push_back(detail);
+            }
             return false;
         }
         const auto category = ReadSfoString(candidate, "CATEGORY");
@@ -109,6 +120,13 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
         if (search.matches.empty()) {
             error = fmt::format("No PS4 base game with a valid CUSA title ID found in this folder or its subfolders:\n{}",
                                 folder.string());
+            if (!rejected.empty()) {
+                error += "\n\nAn executable was found, but its game metadata could not be accepted:";
+                for (const auto& detail : rejected) error += "\n" + detail;
+            }
+            error += "\n\nOther CUSA IDs, including CUSA00003, are allowed experimentally. "
+                     "Select an unpacked base game with eboot.bin and sce_sys/param.sfo; "
+                     "an update alone or a PKG archive cannot be launched.";
             return std::nullopt;
         }
         folder = search.matches.front();
@@ -116,8 +134,8 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
     folder = std::filesystem::weakly_canonical(folder, ec);
     const auto eboot = folder / "eboot.bin";
     if (!std::filesystem::is_regular_file(eboot, ec)) {
-        error = fmt::format("No eboot.bin in\n{}\n\nSelect the Driveclub base game folder ({}).",
-                            folder.string(), TitleId);
+        error = fmt::format("No eboot.bin in\n{}\n\nSelect the unpacked Driveclub base game folder. "
+                            "Other valid CUSA IDs are allowed experimentally.", folder.string());
         return std::nullopt;
     }
     const auto title_id = ReadSfoString(folder, "TITLE_ID");
@@ -274,7 +292,7 @@ std::string UsageText() {
                        "Experimental versions also attempt binary patches after byte checks.\n"
                        "The update must sit next to it as <folder>-UPDATE or <folder>-patch.\n"
                        "Settings and saves are kept in:\n{}",
-                       AppName, TitleId, TargetAppVersion, executable,
+                       AppName, ReferenceTitleId, ReferenceAppVersion, executable,
                        Common::FS::GetUserPath(Common::FS::PathType::UserDir).string());
 }
 

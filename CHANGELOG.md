@@ -11,7 +11,20 @@ The original Windows history is preserved in
 
 ## Unreleased
 
-No changes yet.
+- On Linux hosts with at most four available physical CPU cores, keep the graphics
+  command processor and guest/driver workers on shared cores instead of isolating
+  a quarter of a 4c/8t host. Larger hosts retain their reservation policy. This
+  addresses the Steam Deck topology observed in issue #1; FPS gains require
+  testing on the device and are not guaranteed.
+- Add experimental 480p and 576p scene scaling while preserving native 1080p
+  menu/HUD output, plus independent 854x480 and 1024x576 Linux window sizes.
+  Window size does not change the internal menu framebuffer. New scene scales
+  require gameplay validation; no lower-resolution framebuffer patches are forced.
+- Clarify that CUSA00093 / 01.28 is the patch reference, not a launch whitelist.
+  Rename the reference constants and test CUSA00003 discovery and matching updates.
+  Missing/malformed game metadata now identifies rejected executable directories
+  and explains that unpacked base-game metadata is required. Issue #2's real-game
+  failure remains unconfirmed without its reporter's error message/log.
 
 ## 0.2.3 — 2026-10-22
 

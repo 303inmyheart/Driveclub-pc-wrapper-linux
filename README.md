@@ -138,7 +138,13 @@ on these versions too, but only when the expected bytes at their known locations
 match; unmatched patch groups are skipped. Offsets are not automatically relocated,
 so compatibility, correct game speed and every setting are not guaranteed.
 
-Render resolution includes **720p**, 1080p, 1440p and 2160p. 720p scales the 3D scene through the engine while keeping the menu/HUD output
+Development builds add experimental **480p and 576p** scene settings and small
+window sizes; these additions are not part of release 0.2.3 and need device tests.
+Linux hosts with at most four available physical cores also keep CPU cores shared
+instead of reserving a whole core for graphics-command processing.
+
+Render resolution includes **720p**, 1080p, 1440p and 2160p. Sub-native rendering
+scales the 3D scene through the engine while keeping the menu/HUD output
 at native 1080p (with aspect-aware ultrawide output). It does not shrink the
 interface framebuffer to 1280x720.
 

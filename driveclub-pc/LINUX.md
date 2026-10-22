@@ -216,6 +216,25 @@ without changing power settings. Monotonic timestamps align approximately with
 the frame profiler. The affinity walker preserves its registered GPU owner even
 when that owner uses a wide P-core mask.
 
+Development builds after 0.2.3 leave all CPU cores shared on Linux hosts with four
+or fewer available physical cores, including 4c/8t handhelds. Counting SMT threads
+as spare cores previously caused the Steam Deck to lose one physical core from
+guest/driver worker masks. Larger hosts keep their existing reservation policy.
+This scheduling change has regression coverage but still needs a Deck race test.
+
+Development builds also offer experimental 480p (`-resolutionscale 0.444444`) and
+576p (`-resolutionscale 0.533333`) scenes. Like 720p they retain native menu/HUD
+buffers. The Linux window-size selector independently offers 854x480 and 1024x576
+when borderless fullscreen is off. Smaller window size is a presentation setting,
+not a patch to the menu coordinate system; fullscreen follows the desktop.
+These scene scales need gameplay/graphics validation on actual devices.
+
+CUSA00003 and other syntactically valid CUSA IDs are accepted experimentally;
+CUSA00093 / 01.28 is a patch reference, not a whitelist. Folder-discovery errors
+now include missing/unreadable/invalid metadata for rejected executables. This
+does not repair a damaged dump or guarantee compatible binary patches. Include
+the exact error and start log when reporting a different-region launch failure.
+
 Telemetry also includes NVIDIA power/thermal clock-limiting reasons and cumulative
 CPU thermal throttle counters where supported. Compare counter changes during
 the run, not their absolute values. Optional NVIDIA fields are queried separately
