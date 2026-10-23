@@ -19,10 +19,10 @@ Regular Linux release, based on original Driveclub-PC 0.2.5. Restores the Linux
 fork changes after syncing the GitHub fork to upstream. Built locally; no GitHub
 Actions build minutes are used.
 
-The maintainer reports successful testing of the preceding 0.2.5 Linux preview.
-The following cover fix is additionally checked for image availability and exact
-RPC payload serialization; a visible cover in a real Discord client is not yet
-independently confirmed.
+The maintainer reports successful testing of the preceding 0.2.5 Linux preview
+and confirms the Driveclub cover is visible in Discord with release candidate 1.
+Image availability and exact RPC payload serialization are checked as well.
+These are local/user checks, not broad hardware or all-race compatibility claims.
 
 - Replace the broken PlayStation cover endpoint (HTTP 404 for CUSA00093) with an
   attributed, unchanged Driveclub cover hosted at an immutable GitHub asset commit.

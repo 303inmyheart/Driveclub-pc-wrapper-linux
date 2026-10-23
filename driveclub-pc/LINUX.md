@@ -35,6 +35,8 @@ Profile/RPC edits are applied with **Save and close** or **Play** and take effec
 on the next game start. The Rich Presence cover is hosted at a fixed GitHub asset commit. Discord keeps
 the upstream shadPS4 application identity; this does not claim or link the
 official Driveclub game-directory entry.
+The maintainer confirmed the cover appears in the real Discord client with
+0.2.5 release candidate 1; the final release retains that image URL and RPC code.
 
 ## Distribution requirements
 
