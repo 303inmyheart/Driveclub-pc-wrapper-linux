@@ -4,9 +4,9 @@ This port targets **x86_64 Linux** with an AVX2-capable CPU (the existing
 `x86-64-v3` target) and a Vulkan-capable graphics driver. It runs the PS4 game
 through the bundled emulator; Wine and Proton are not required.
 
-## Profile and Discord settings (development builds)
+## Profile and Discord settings
 
-The local upstream-0.2.5 integration also checks Flatpak Discord's socket at
+Linux release 0.2.5 also checks Flatpak Discord's socket at
 `$XDG_RUNTIME_DIR/app/com.discordapp.Discord/discord-ipc-*`, after native sockets.
 It does not need a socket symlink, a changed runtime directory or extra Flatpak
 permissions. RPC remains opt-in and starts after the game is loaded. Logs now
@@ -20,7 +20,7 @@ rate. Linux image quality/performance still needs gameplay validation. A custom
 save root can be selected independently of settings/cache paths; existing saves
 are not moved. Resetting the field selects the existing default root.
 
-Development builds after 0.2.4 Experimental 1 add a **PS4 username** field for the
+Linux release 0.2.5 adds a **PS4 username** field for the
 existing player-1 local profile and a **Discord Rich Presence** switch. The name
 is stored in `users.json`; renaming preserves the user ID, other profiles and save
 directories. Names must be nonblank valid UTF-8 of at most 16 bytes, matching the
@@ -32,8 +32,9 @@ in the launcher and use a running Discord client to publish the current game.
 The saved launcher choice also applies after loading per-game settings. Builds
 explicitly compiled with `-DENABLE_DISCORD_RPC=OFF` show the switch as unavailable.
 Profile/RPC edits are applied with **Save and close** or **Play** and take effect
-on the next game start. Current public pre-releases do not gain these options
-until an updated build is published.
+on the next game start. The Rich Presence cover is hosted at a fixed GitHub asset commit. Discord keeps
+the upstream shadPS4 application identity; this does not claim or link the
+official Driveclub game-directory entry.
 
 ## Distribution requirements
 

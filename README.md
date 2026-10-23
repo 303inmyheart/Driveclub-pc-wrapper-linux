@@ -23,11 +23,11 @@ game itself into a native Linux game.
 
 ## Download and requirements
 
-This local integration branch combines original upstream **0.2.5**
+Linux release **0.2.5** combines original upstream **0.2.5**
 (`d9701fc1`) with the Linux fork patches through `6cc814a5`. It adds Linux controls
 for upstream frame generation and a custom save root, plus Flatpak Discord IPC
-discovery. This integration is experimental and has not been race-tested on
-Linux. Upstream's Windows performance/PGO results do not validate this Linux build.
+discovery. The maintainer reports successful testing of the preceding Linux preview;
+frame generation and other hardware/races still need broader validation. Upstream's Windows performance/PGO results do not validate this Linux build.
 
 Download the `.AppImage` and its `.sha256` file from
 [GitHub Releases](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/releases).
@@ -144,8 +144,8 @@ on these versions too, but only when the expected bytes at their known locations
 match; unmatched patch groups are skipped. Offsets are not automatically relocated,
 so compatibility, correct game speed and every setting are not guaranteed.
 
-Development builds add experimental **480p and 576p** scene settings and small
-window sizes; these additions are not part of release 0.2.3 and need device tests.
+Release 0.2.5 adds experimental **480p and 576p** scene settings and small
+window sizes; these still need wider device tests.
 Linux hosts with at most four available physical cores also keep CPU cores shared
 instead of reserving a whole core for graphics-command processing.
 
@@ -171,10 +171,12 @@ unverified; this release does not promise 60 FPS on handhelds.
 
 ## Build and technical documentation
 
-Upcoming builds add a launcher **Discord Rich Presence** switch (off by default)
+Release 0.2.5 includes a launcher **Discord Rich Presence** switch (off by default)
 and a **PS4 username** field for the existing local player-1 profile. Renaming
 keeps the profile ID and saves; this does not rename a PSN/ShadNet account.
-These options are not included in 0.2.4 Experimental 1.
+Discord supports native and Flatpak clients. Driveclub cover artwork uses a
+commit-pinned image URL; its rights and source are documented in
+[the artwork notice](packaging/discord/NOTICE.md).
 
 For a complete local build without GitHub Actions, see
 [Build the Linux AppImage locally](driveclub-pc/BUILD-LINUX.md).
@@ -186,7 +188,7 @@ builds on Ubuntu 24.04. Successful runs provide an AppImage, checksum and
 `BUILD-INFO.txt` identifying the exact source commit. Version tags also trigger
 release builds. Development artifacts are available for 30 days; published release
 assets are available from the Releases page.
-Release 0.2.3 is built and checked locally; its publication does not require
+Release 0.2.5 is built and checked locally; its publication does not require
 GitHub Actions build minutes.
 
 ## Credits and project lineage

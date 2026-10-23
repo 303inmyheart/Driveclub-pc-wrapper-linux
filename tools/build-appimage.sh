@@ -55,6 +55,7 @@ cp "$root/LICENSE" "$root/README.md" "$root/README-UPSTREAM.md" \
     "$root/README-GR2fork.md" "$root/CHANGELOG.md" "$appdir/usr/share/doc/driveclub-pc/"
 cp -r "$root/LICENSES" "$appdir/usr/share/doc/driveclub-pc/"
 cp -r "$root/driveclub-pc" "$appdir/usr/share/doc/driveclub-pc/"
+cp -r "$root/packaging/discord" "$appdir/usr/share/doc/driveclub-pc/discord-artwork"
 while IFS= read -r -d '' notice; do
     relative=${notice#"$root/"}
     destination="$appdir/usr/share/doc/driveclub-pc/third-party/$relative"

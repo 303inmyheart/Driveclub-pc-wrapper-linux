@@ -3,6 +3,7 @@
 """Verify the linked SDK's handshake and SET_ACTIVITY against a fake Flatpak client."""
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import struct
@@ -16,6 +17,7 @@ with tempfile.TemporaryDirectory(prefix='dcpc-rpc-') as tmp:
     binary = tmp / 'client'
     subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++20', '-pthread',
                     '-I' + str(root / 'externals/discord-rpc/include'),
+                    '-I' + str(root / 'src'),
                     str(root / 'tests/discord_rpc_protocol_smoke.cpp'), str(library),
                     '-o', str(binary)], check=True)
     path = tmp / 'app/com.discordapp.Discord/discord-ipc-0'
@@ -47,6 +49,9 @@ with tempfile.TemporaryDirectory(prefix='dcpc-rpc-') as tmp:
                     op, message = receive(conn)
                     if message.get('cmd') == 'SET_ACTIVITY':
                         assert message['args']['activity']['state'] == 'Driveclub IPC test'
+                        image = message['args']['activity']['assets']['large_image']
+                        assert re.fullmatch(r'https://raw\.githubusercontent\.com/303inmyheart/Driveclub-pc-wrapper-linux/[0-9a-f]{40}/packaging/discord/driveclub-cover\.jpg', image), image
+                        assert len(image) > 32, 'Long asset URLs must survive SDK serialization'
                         break
                 else:
                     raise AssertionError('Missing presence update')

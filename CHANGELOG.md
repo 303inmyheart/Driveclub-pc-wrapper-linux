@@ -11,6 +11,24 @@ The original Windows history is preserved in
 
 ## Unreleased
 
+No changes yet.
+
+## 0.2.5 — 2026-10-23
+
+Regular Linux release, based on original Driveclub-PC 0.2.5. Restores the Linux
+fork changes after syncing the GitHub fork to upstream. Built locally; no GitHub
+Actions build minutes are used.
+
+The maintainer reports successful testing of the preceding 0.2.5 Linux preview.
+The following cover fix is additionally checked for image availability and exact
+RPC payload serialization; a visible cover in a real Discord client is not yet
+independently confirmed.
+
+- Replace the broken PlayStation cover endpoint (HTTP 404 for CUSA00093) with an
+  attributed, unchanged Driveclub cover hosted at an immutable GitHub asset commit.
+  Cover art is game-identification artwork with its own rights notice, not GPL
+  code. The upstream shadPS4 Discord application identity remains unchanged.
+
 - Integrate original Driveclub-PC 0.2.5 at upstream commit d9701fc1, preserving
   the Linux port's recursive discovery, experimental version patch checks,
   sub-native scene resolutions, DLC selection, CPU affinity fixes, profiling,

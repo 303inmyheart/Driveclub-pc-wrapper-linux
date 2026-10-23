@@ -4,6 +4,7 @@
 #include <chrono>
 #include <thread>
 #include <discord_rpc.h>
+#include "driveclub/discord_assets.h"
 static std::atomic<bool> ready{false};
 int main() {
     DiscordEventHandlers handlers{};
@@ -12,6 +13,7 @@ int main() {
     DiscordRichPresence presence{};
     presence.state = "Driveclub IPC test";
     presence.details = "Playing";
+    presence.largeImageKey = DriveclubPC::DiscordAssets::CoverUrl;
     Discord_UpdatePresence(&presence);
     for (int i = 0; i < 250; ++i) {
         Discord_RunCallbacks();
