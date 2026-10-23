@@ -130,7 +130,14 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
             return false;
         }
         const auto category = ReadSfoString(candidate, "CATEGORY");
-        return !category || (*category != "gp" && !category->starts_with("ac"));
+        if (category && (*category == "gp" || category->starts_with("ac"))) {
+            if (rejected.size() < 8) {
+                rejected.push_back(fmt::format("{}: TITLE_ID {} is accepted, but CATEGORY '{}' identifies {}. Select the base game alongside this folder.",
+                    candidate.string(), *id, *category, *category == "gp" ? "an update" : "DLC"));
+            }
+            return false;
+        }
+        return true;
     };
     if (!is_base(folder)) {
         const auto search = Common::FS::FindGameDirectories(folder, is_base);
@@ -147,7 +154,7 @@ std::optional<std::filesystem::path> ResolveAndValidateGame(const std::filesyste
             error = fmt::format("No PS4 base game with a valid CUSA title ID found in this folder or its subfolders:\n{}",
                                 folder.string());
             if (!rejected.empty()) {
-                error += "\n\nAn executable was found, but its game metadata could not be accepted:";
+                error += "\n\nAn executable was found, but its metadata is invalid or identifies update/DLC content:";
                 for (const auto& detail : rejected) error += "\n" + detail;
             }
             error += "\n\nOther CUSA IDs, including CUSA00003, are allowed experimentally. "

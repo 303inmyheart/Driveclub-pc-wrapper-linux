@@ -256,12 +256,18 @@ as spare cores previously caused the Steam Deck to lose one physical core from
 guest/driver worker masks. Larger hosts keep their existing reservation policy.
 This scheduling change has regression coverage but still needs a Deck race test.
 
-Development builds also offer experimental 480p (`-resolutionscale 0.444444`) and
+Development builds also offer experimental 240p (`-resolutionscale 0.222222`),
+360p (`-resolutionscale 0.333333`), 480p (`-resolutionscale 0.444444`) and
 576p (`-resolutionscale 0.533333`) scenes. Like 720p they retain native menu/HUD
-buffers. The Linux window-size selector independently offers 854x480 and 1024x576
+buffers. The Linux window-size selector independently offers 426x240, 640x360, 854x480 and 1024x576
 when borderless fullscreen is off. Smaller window size is a presentation setting,
 not a patch to the menu coordinate system; fullscreen follows the desktop.
-These scene scales need gameplay/graphics validation on actual devices.
+The issue #3 reporter measured 28–32 FPS at 480p and 32–36 FPS after changing
+the Deck power/GPU settings. This does not guarantee a frame rate on other devices.
+The new 240p/360p scales still need gameplay/graphics validation.
+
+Recursive discovery follows linked directories with canonical-target deduplication
+and search limits. This supports symlinked libraries without following cycles.
 
 CUSA00003 and other syntactically valid CUSA IDs are accepted experimentally;
 CUSA00093 / 01.28 is a patch reference, not a whitelist. Folder-discovery errors

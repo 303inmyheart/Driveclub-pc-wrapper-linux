@@ -145,7 +145,9 @@ match; unmatched patch groups are skipped. Offsets are not automatically relocat
 so compatibility, correct game speed and every setting are not guaranteed.
 
 Release 0.2.5 adds experimental **480p and 576p** scene settings and small
-window sizes; these still need wider device tests.
+window sizes; these still need wider device tests. Development builds additionally
+offer experimental **240p / 360p** scene scales and 426×240 / 640×360 windows.
+Menu/HUD buffers remain native; lower scene scales do not guarantee 40 FPS.
 Linux hosts with at most four available physical cores also keep CPU cores shared
 instead of reserving a whole core for graphics-command processing.
 

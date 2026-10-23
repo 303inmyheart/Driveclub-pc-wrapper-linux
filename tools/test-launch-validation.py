@@ -37,9 +37,13 @@ def main():
             sfo(root / mode / 'CUSA00093', 'CUSA00093')
         sfo(root / 'region/CUSA12345', 'CUSA12345')
         sfo(root / 'scene720/CUSA00093', 'CUSA00093')
-        for lines in (480, 576):
+        for lines in (240, 360, 480, 576):
             sfo(root / f'scene{lines}/CUSA00093', 'CUSA00093')
         sfo(root / 'cusa00003/nested/CUSA00003', 'CUSA00003')
+        sfo(root / 'external/CUSA00003', 'CUSA00003')
+        (root / 'linked').mkdir()
+        (root / 'linked/library').symlink_to(root / 'external', target_is_directory=True)
+        sfo(root / 'update-only/CUSA00003', 'CUSA00003', category='gp')
         sfo(root / 'cusa00003-update/CUSA00003', 'CUSA00003', version='01.00')
         sfo(root / 'cusa00003-update/CUSA00003-patch', 'CUSA00003', category='gp')
         sfo(root / 'bad-trailing-entry/CUSA00003', 'CUSA00003')
@@ -62,6 +66,10 @@ def main():
                  ('save-root', 'custom save data root', False),
                  ('save-invalid', 'save data root must be an absolute path', False),
                  ('scene720', 'Render policy: scene target 720p, output 1920x1080', False),
+                 ('linked', 'Missing required modules', True),
+                 ('update-only', "TITLE_ID CUSA00003 is accepted, but CATEGORY 'gp'", False),
+                 ('scene240', 'Render policy: scene target 240p, output 1920x1080', False),
+                 ('scene360', 'Render policy: scene target 360p, output 1920x1080', False),
                  ('scene480', 'Render policy: scene target 480p, output 1920x1080', False),
                  ('scene576', 'Render policy: scene target 576p, output 1920x1080', False),
                  ('cusa00003', 'Missing required modules', True),

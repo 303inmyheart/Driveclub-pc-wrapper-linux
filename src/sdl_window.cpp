@@ -133,7 +133,8 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
         UNREACHABLE_MSG("Failed to create window handle: {}", SDL_GetError());
     }
 
-    SDL_SetWindowMinimumSize(window, 640, 360);
+    // Allow the experimental 240p output window selected by the launcher.
+    SDL_SetWindowMinimumSize(window, 426, 240);
 
     bool error = false;
     const SDL_DisplayID displayIndex = SDL_GetDisplayForWindow(window);

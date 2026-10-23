@@ -13,6 +13,23 @@ The original Windows history is preserved in
 
 No changes yet.
 
+## 0.2.6-experimental.1 — 2026-10-23
+
+Pre-release for issues #2 and #3. Built locally; real-game confirmation of the
+new 240p/360p scales and the reported CUSA00003 failure is still pending.
+
+- Add experimental 240p and 360p scene rendering and independent Linux window
+  sizes 426×240 / 640×360 following Steam Deck feedback in issue #3. Lower
+  the game window minimum from 640×360 to 426×240 so 240p output is usable. Menus/HUD
+  retain the native framebuffer. Lower scene scales require real-game testing;
+  no FPS target is guaranteed.
+- Follow directory symlinks during bounded game discovery, deduplicating canonical
+  targets to prevent loops and duplicate installations. This fixes discovery of
+  linked game libraries, a possible cause of the folder error in issue #2.
+- Explain when an accepted CUSA title is rejected because its metadata describes
+  an update or DLC. The specific CUSA00003 report remains unconfirmed without
+  its folder layout and complete error details.
+
 ## 0.2.5 — 2026-10-23
 
 Regular Linux release, based on original Driveclub-PC 0.2.5. Restores the Linux

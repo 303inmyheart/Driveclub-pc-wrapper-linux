@@ -19,7 +19,7 @@ inline bool IsReferenceBuild(std::string_view id, std::string_view version) {
 }
 
 inline bool IsRenderResolution(int lines) {
-    return lines == 480 || lines == 576 || lines == 720 || lines == 1080 ||
+    return lines == 240 || lines == 360 || lines == 480 || lines == 576 || lines == 720 || lines == 1080 ||
            lines == 1440 || lines == 2160;
 }
 
@@ -31,6 +31,8 @@ inline unsigned PresentationLines(unsigned scene_lines) {
 
 inline std::string_view RenderScaleArgument(unsigned lines) {
     switch (lines) {
+    case 240: return "-resolutionscale 0.222222";
+    case 360: return "-resolutionscale 0.333333";
     case 480: return "-resolutionscale 0.444444";
     case 576: return "-resolutionscale 0.533333";
     case 720: return "-resolutionscale 0.666667";

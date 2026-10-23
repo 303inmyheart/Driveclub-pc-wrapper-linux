@@ -5,6 +5,7 @@
 #include <deque>
 #include <filesystem>
 #include <string_view>
+#include <set>
 #include <vector>
 
 namespace Common::FS {
@@ -19,7 +20,7 @@ struct GameDirectorySearch {
     bool incomplete = false;
 };
 
-// Search containers without descending into game payloads, overlays or symlink loops.
+// Search containers without descending into game payloads, overlays or previously visited directory targets.
 // Limits keep an accidentally selected filesystem root from blocking the launcher indefinitely.
 template <typename IsBaseGame>
 GameDirectorySearch FindGameDirectories(const std::filesystem::path& root, IsBaseGame is_base_game,
@@ -28,6 +29,7 @@ GameDirectorySearch FindGameDirectories(const std::filesystem::path& root, IsBas
     GameDirectorySearch result;
     std::deque<std::pair<fs::path, unsigned>> pending{{root, 0}};
     size_t visited = 0;
+    std::set<fs::path> targets;
     while (!pending.empty()) {
         if (++visited > max_directories) {
             result.incomplete = true;
@@ -35,6 +37,9 @@ GameDirectorySearch FindGameDirectories(const std::filesystem::path& root, IsBas
         }
         auto [folder, depth] = std::move(pending.front());
         pending.pop_front();
+        std::error_code target_error;
+        const auto target = fs::canonical(folder, target_error);
+        if (target_error || !targets.insert(target).second) continue;
         if (IsGameOverlay(folder)) {
             continue;
         }
@@ -49,7 +54,7 @@ GameDirectorySearch FindGameDirectories(const std::filesystem::path& root, IsBas
         fs::directory_iterator it(folder, fs::directory_options::skip_permission_denied, ec), end;
         while (it != end && !ec) {
             const auto entry = *it;
-            if (!entry.is_symlink(ec) && entry.is_directory(ec) && !IsGameOverlay(entry.path())) {
+            if (entry.is_directory(ec) && !IsGameOverlay(entry.path())) {
                 if (depth == max_depth) {
                     result.incomplete = true;
                 } else {

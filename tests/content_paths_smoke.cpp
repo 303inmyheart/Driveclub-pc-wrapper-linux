@@ -42,6 +42,18 @@ int main() {
     assert(Common::FS::FindGameDirectories(container, matches_title, 1).incomplete);
     assert(Common::FS::FindGameDirectories(container, matches_title, 10000, 1).incomplete);
 
+    // A game reachable only through a directory symlink must be discoverable.
+    const auto external = root / "external-library" / "CUSA00003";
+    make_game(external);
+    const auto linked_container = root / "linked-library";
+    fs::create_directory(linked_container);
+    fs::create_directory_symlink(external.parent_path(), linked_container / "games");
+    fs::create_directory_symlink(external.parent_path(), linked_container / "duplicate");
+    fs::create_directory_symlink(linked_container, external.parent_path() / "loop");
+    found = Common::FS::FindGameDirectories(linked_container, matches_title);
+    assert(!found.incomplete && found.matches.size() == 1);
+    assert(fs::equivalent(found.matches.front(), external));
+
     const auto second = container / "another copy" / "CUSA00093";
     make_game(second);
     found = Common::FS::FindGameDirectories(container, matches_title);

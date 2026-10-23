@@ -607,8 +607,8 @@ void CollectSettings() {
     s.af = af_values[std::clamp(ComboIndex(IdAf), 0, 4)];
     s.aa = std::clamp(ComboIndex(IdAa), 0, 2);
     s.pcore_pin = Checked(IdPcore);
-    static constexpr int render_values[] = {480, 576, 720, 1080, 1440, 2160};
-    s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 5)];
+    static constexpr int render_values[] = {240, 360, 480, 576, 720, 1080, 1440, 2160};
+    s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 7)];
     s.async_shaders = Checked(IdAsyncShaders);
     s.show_fps = Checked(IdShowFps);
     s.deferred_recording = Checked(IdDeferred);
@@ -736,15 +736,18 @@ void BuildControls() {
     // driveclub-pc: lines; the width follows the display (or window) aspect, see widescreen.h.
     Label(L"Render resolution", L, y, 140);
     Combo(IdRenderRes, C, y, W,
-          {L"480p scene (experimental, native UI)", L"576p scene (experimental, native UI)",
+          {L"240p scene (experimental, native UI)", L"360p scene (experimental, native UI)",
+           L"480p scene (experimental, native UI)", L"576p scene (experimental, native UI)",
            L"720p scene (native UI)", L"1080p (native)", L"1440p (sharper, about 10-15% slower)",
            L"2160p (very demanding)"},
-          s.render_res == 2160   ? 5
-          : s.render_res == 1440 ? 4
-          : s.render_res == 720  ? 2
-          : s.render_res == 576  ? 1
-          : s.render_res == 480  ? 0
-                                 : 3);
+          s.render_res == 2160   ? 7
+          : s.render_res == 1440 ? 6
+          : s.render_res == 720  ? 4
+          : s.render_res == 576  ? 3
+          : s.render_res == 480  ? 2
+          : s.render_res == 360  ? 1
+          : s.render_res == 240  ? 0
+                                 : 5);
     y += Row;
 
     Label(L"Upscaling", L, y, 140);
