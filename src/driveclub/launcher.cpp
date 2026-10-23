@@ -16,9 +16,20 @@
 #include "common/logging/log.h"
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
+#include "core/user_settings.h"
+#include "driveclub/profile_options.h"
 #include "driveclub/launch_check.h"
 #include "driveclub/launcher.h"
 #include "driveclub/widescreen.h"
+
+#ifndef _WIN32
+#include <SDL3/SDL.h>
+#include <ImGuiFileDialog.h>
+#include <imgui.h>
+#include "imgui/big_picture/imgui_impl_sdl3_big_picture.h"
+#include "imgui/big_picture/imgui_impl_sdlrenderer3.h"
+#include "imgui/renderer/font_stack.h"
+#endif
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -47,7 +58,10 @@ fs::path TextPath(std::string_view text) {
 struct Settings {
     std::string game_dir;
     std::string save_dir; // driveclub-pc: empty uses the existing emulator home, saves only
+    std::string ps4_username;
+    bool discord_rpc = false;
     int target_fps = 60;
+    int present_mode = 0; ///< Linux: Immediate, Mailbox, FIFO (in that order)
     bool fullscreen = true;
     int width = 0; ///< 0 = the primary display's resolution
     int height = 0;
@@ -59,7 +73,7 @@ struct Settings {
     int af = 16;
     int aa = 1;
     bool pcore_pin = true;
-    // driveclub-pc: the game's own render scaling (render_res.h): 1080, 1440 or 2160 lines.
+    // Scene resolution; below 1080p the menu/HUD framebuffer remains native.
     int render_res = 1080;
     bool async_shaders = true; ///< shader translation and pipeline creation off-thread
     bool frame_generation = false;
@@ -75,6 +89,9 @@ fs::path IniPath() {
 
 Settings Load() {
     Settings s;
+    if (const auto* user = UserManagement.GetUserByPlayerIndex(1))
+        s.ps4_username = user->user_name;
+    s.discord_rpc = EmulatorSettings.IsDiscordRPCEnabled();
     std::ifstream in(IniPath());
     std::map<std::string, std::string> kv;
     for (std::string line; std::getline(in, line);) {
@@ -100,6 +117,8 @@ Settings Load() {
         s.save_dir = kv["save_dir"];
     }
     s.target_fps = num("target_fps", s.target_fps);
+    s.discord_rpc = num("discord_rpc", s.discord_rpc) != 0;
+    s.present_mode = std::clamp(num("present_mode", s.present_mode), 0, 2);
     s.fullscreen = num("fullscreen", s.fullscreen) != 0;
     s.width = num("width", s.width);
     s.height = num("height", s.height);
@@ -112,7 +131,7 @@ Settings Load() {
     s.aa = std::clamp(num("aa", s.aa), 0, 2);
     s.pcore_pin = num("pcore_pin", 1) != 0;
     s.render_res = num("render_res", s.render_res);
-    if (s.render_res != 1440 && s.render_res != 2160) {
+    if (!IsRenderResolution(s.render_res)) {
         s.render_res = 1080;
     }
     s.async_shaders = num("async_shaders", 1) != 0;
@@ -129,12 +148,14 @@ Settings Load() {
     return s;
 }
 
-void Save(const Settings& s) {
+bool Save(const Settings& s) {
     std::ofstream out(IniPath());
     out << "# Driveclub-PC launcher settings\n"
         << "game_dir=" << s.game_dir << "\n"
         << "save_dir=" << s.save_dir << "\n"
+        << "discord_rpc=" << int(s.discord_rpc) << "\n"
         << "target_fps=" << s.target_fps << "\n"
+        << "present_mode=" << s.present_mode << "\n"
         << "fullscreen=" << int(s.fullscreen) << "\n"
         << "width=" << s.width << "\n"
         << "height=" << s.height << "\n"
@@ -151,6 +172,36 @@ void Save(const Settings& s) {
         << "deferred_recording=" << int(s.deferred_recording) << "\n"
         << "classic_vblank=" << int(s.classic_vblank) << "\n"
         << "show_launcher=" << int(s.show_launcher) << "\n";
+    out.flush();
+    return bool(out);
+}
+
+bool SaveProfileOptions(const Settings& s, std::string& error) {
+    if (!IsValidLocalUserName(s.ps4_username)) {
+        error = "PS4 username must contain 1–16 UTF-8 bytes, no control characters, "
+                "and cannot consist only of spaces.";
+        return false;
+    }
+    auto* user = UserManagement.GetUserByPlayerIndex(1);
+    if (!user) {
+        error = "No local PS4 profile is assigned to player 1. Check users.json.";
+        return false;
+    }
+    if (user->user_name != s.ps4_username) {
+        const auto old_name = user->user_name;
+        UserManagement.RenameUser(user->user_id, s.ps4_username);
+        if (!UserSettings.Save()) {
+            user->user_name = old_name;
+            error = "Could not save the PS4 username. Check data directory permissions.";
+            return false;
+        }
+    }
+    EmulatorSettings.SetDiscordRPCEnabled(s.discord_rpc);
+    if (!EmulatorSettings.Save()) {
+        error = "Could not save the Discord RPC setting. Check data directory permissions.";
+        return false;
+    }
+    return true;
 }
 
 std::pair<int, int> DisplaySize() {
@@ -161,6 +212,17 @@ std::pair<int, int> DisplaySize() {
     if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmPelsWidth > 0) {
         width = static_cast<int>(mode.dmPelsWidth);
         height = static_cast<int>(mode.dmPelsHeight);
+    }
+#else
+    const bool init_video = !(SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO);
+    if (!init_video || SDL_InitSubSystem(SDL_INIT_VIDEO)) {
+        if (const auto* mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay())) {
+            width = mode->w;
+            height = mode->h;
+        }
+        if (init_video) {
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        }
     }
 #endif
     return {width, height};
@@ -174,7 +236,7 @@ Widescreen::Output TargetOutput(const Settings& s) {
         w = s.width;
         h = s.height;
     }
-    return Widescreen::ComputeOutput(w, h, static_cast<u32>(s.render_res));
+    return Widescreen::ComputeOutput(w, h, PresentationLines(static_cast<u32>(s.render_res)));
 }
 
 /// driveclub-pc: extra video memory the game needs for its render targets at this size.
@@ -185,10 +247,11 @@ int ExtraVramMb(const Widescreen::Output& out) {
 
 /// Writes the graphics settings into the per-game emulator config, keeping its other keys.
 void WriteGameConfig(const Settings& s) {
-    const auto title_id = ReadGameTitleId(TextPath(s.game_dir)).value_or(std::string(TitleId));
-    EnsureDefaultGameConfig(title_id);
+    const auto title_id = GameTitleId(s.game_dir);
+    if (!title_id) return;
+    EnsureDefaultGameConfig(*title_id);
     const auto path = Common::FS::GetUserPath(Common::FS::PathType::CustomConfigs) /
-                      fmt::format("{}.json", title_id);
+                      fmt::format("{}.json", *title_id);
     nlohmann::json json = nlohmann::json::object();
     {
         std::ifstream in(path);
@@ -209,6 +272,10 @@ void WriteGameConfig(const Settings& s) {
     gpu["rcas_enabled"] = s.sharpening != 0;
     gpu["rcas_attenuation"] = s.sharpening == 2 ? 100 : 250;
     gpu["readbacks_mode"] = s.readbacks;
+#ifdef __linux__
+    static constexpr std::array modes{"Immediate", "Mailbox", "Fifo"};
+    gpu["present_mode"] = modes[s.present_mode];
+#endif
     // driveclub-pc: a higher render resolution needs a bigger video-memory budget in the game
     // (DCPC_VRAM_EXTRA_MB below), backed by extra direct memory.
     json["General"]["extra_dmem_in_mbytes"] = ExtraVramMb(TargetOutput(s));
@@ -229,19 +296,30 @@ void SetEnvDefault(const char* name, const std::string& value) {
 
 void ApplyRuntime(const Settings& s) {
     EmulatorSettings.SetSaveDataHome(TextPath(s.save_dir));
+    EmulatorSettings.SetDiscordRPCEnabled(s.discord_rpc);
+    EmulatorSettings.SetDiscordRPCEnabled(s.discord_rpc, true);
+#ifdef __linux__
+    static constexpr std::array modes{"Immediate", "Mailbox", "Fifo"};
+    EmulatorSettings.SetPresentMode(modes[s.present_mode]);
+    EmulatorSettings.SetPresentMode(modes[s.present_mode], true);
+#endif
     SetEnvDefault("DCPC_AF", std::to_string(s.af));
     SetEnvDefault("DCPC_AA", std::to_string(s.aa));
     SetEnvDefault("DCPC_PCORE_PIN", s.pcore_pin ? "1" : "0");
     SetEnvDefault("DCPC_FRAME_GEN", s.frame_generation ? "1" : "0");
+    LOG_INFO(Loader, "Launcher frame policy: {} FPS base, frame generation {}",
+             s.target_fps, s.frame_generation ? "on" : "off");
     SetEnvDefault("DCPC_ASYNC_SHADERS", s.async_shaders ? "1" : "0");
     SetEnvDefault("DCPC_ASYNC_PIPELINES", s.async_shaders ? "1" : "0");
     const auto out = TargetOutput(s);
-    if (out.height != 1080) {
-        // The engine's own -resolutionscale switch scales its render targets (width aligned to
-        // 128, height = width * 9 / 16, or table height * scale with widescreen).
-        SetEnvDefault("DCPC_GAME_ARGS",
-                      out.height == 2160 ? "-resolutionscale 2" : "-resolutionscale 1.3333");
+    const auto scene_lines = s.render_res < 1080 ? static_cast<unsigned>(s.render_res) : out.height;
+    if (scene_lines != 1080) {
+        // Below native, scale the 3D targets only; leave the native UI/output buffers intact.
+        // Above native, retain the established matched scene/output path and memory budget.
+        SetEnvDefault("DCPC_GAME_ARGS", std::string(RenderScaleArgument(scene_lines)));
     }
+    LOG_INFO(Loader, "Render policy: scene target {}p, output {}x{}, native UI preserved below 1080p",
+             scene_lines, out.width, out.height);
     if (out.wide || out.height != 1080) {
         // The game's display buffers follow DCPC_RENDER_RES.
         SetEnvDefault("DCPC_VRAM_EXTRA_MB", std::to_string(ExtraVramMb(out)));
@@ -303,7 +381,7 @@ bool PrepareSaveRoot(const Settings& s, std::string& error) {
     return true;
 }
 
-std::string FirmwareStatus(bool& ok, std::string_view title_id = TitleId) {
+std::string FirmwareStatus(bool& ok, std::string_view title_id = ReferenceTitleId) {
     const auto report = InspectSysModules(title_id);
     ok = report.ready;
     return report.summary;
@@ -333,6 +411,8 @@ std::string Narrow(const std::wstring& w) {
 
 enum Id : int {
     IdGameEdit = 100,
+    IdUsername,
+    IdDiscordRpc,
     IdBrowse,
     IdGameStatus,
     IdFirmwareStatus,
@@ -425,20 +505,17 @@ void RefreshStatus() {
     std::string message;
     if (dir.empty()) {
         ui.game_ok = false;
-        message = "Choose a Driveclub base game folder. Tested: CUSA00093 v1.28.";
+        message = "Choose the Driveclub base game folder. Other title IDs are experimental.";
     } else {
         std::string error;
         const auto eboot = ResolveAndValidateGame(TextPath(dir), error);
         ui.game_ok = eboot.has_value();
-        message =
-            ui.game_ok
-                ? GameCompatibilityNote(ReadGameTitleId(*eboot).value_or(std::string(TitleId)))
-                : error;
+        message = ui.game_ok ? GameCompatibilityText(eboot->parent_path()) : error;
     }
     std::replace(message.begin(), message.end(), '\n', ' ');
     SetText(IdGameStatus, message);
     bool fw = false;
-    const auto title_id = ReadGameTitleId(TextPath(dir)).value_or(std::string(TitleId));
+    const auto title_id = ReadGameTitleId(TextPath(dir)).value_or(std::string(ReferenceTitleId));
     std::string fw_text = FirmwareStatus(fw, title_id);
     std::replace(fw_text.begin(), fw_text.end(), '\n', ' ');
     ui.firmware_ok = fw;
@@ -512,6 +589,8 @@ bool Checked(int id) {
 void CollectSettings() {
     auto& s = g_ui->settings;
     s.game_dir = GetText(IdGameEdit);
+    s.ps4_username = GetText(IdUsername);
+    s.discord_rpc = Checked(IdDiscordRpc);
     static constexpr int fps_values[] = {30, 60, 60, 120};
     const int frame_mode = std::clamp(ComboIndex(IdFps), 0, 3);
     s.target_fps = fps_values[frame_mode];
@@ -528,8 +607,8 @@ void CollectSettings() {
     s.af = af_values[std::clamp(ComboIndex(IdAf), 0, 4)];
     s.aa = std::clamp(ComboIndex(IdAa), 0, 2);
     s.pcore_pin = Checked(IdPcore);
-    static constexpr int render_values[] = {1080, 1440, 2160};
-    s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 2)];
+    static constexpr int render_values[] = {480, 576, 720, 1080, 1440, 2160};
+    s.render_res = render_values[std::clamp(ComboIndex(IdRenderRes), 0, 5)];
     s.async_shaders = Checked(IdAsyncShaders);
     s.show_fps = Checked(IdShowFps);
     s.deferred_recording = Checked(IdDeferred);
@@ -576,6 +655,19 @@ void BuildControls() {
     const auto& s = ui.settings;
     constexpr float L = 24, C = 170, W = 400, Row = 36;
     float y = 72;
+
+    Label(L"PS4 username", L, y, 140);
+    Make(L"EDIT", Widen(s.ps4_username).c_str(), ES_AUTOHSCROLL | WS_TABSTOP,
+         C, y, W, 24, IdUsername, WS_EX_CLIENTEDGE);
+    y += 32;
+    Make(L"BUTTON", L"Discord Rich Presence", BS_AUTOCHECKBOX | WS_TABSTOP,
+         C, y, W, 22, IdDiscordRpc);
+    SendMessageW(ui.controls[IdDiscordRpc], BM_SETCHECK,
+                 s.discord_rpc ? BST_CHECKED : BST_UNCHECKED, 0);
+#ifndef ENABLE_DISCORD_RPC
+    EnableWindow(ui.controls[IdDiscordRpc], FALSE);
+#endif
+    y += 32;
 
     Label(L"Game folder", L, y, 140);
     Make(L"EDIT", Widen(s.game_dir).c_str(), ES_AUTOHSCROLL | WS_TABSTOP, C, y, W - 96, 24,
@@ -644,11 +736,15 @@ void BuildControls() {
     // driveclub-pc: lines; the width follows the display (or window) aspect, see widescreen.h.
     Label(L"Render resolution", L, y, 140);
     Combo(IdRenderRes, C, y, W,
-          {L"1080p (native, fastest)", L"1440p (sharper, about 10-15% slower)",
+          {L"480p scene (experimental, native UI)", L"576p scene (experimental, native UI)",
+           L"720p scene (native UI)", L"1080p (native)", L"1440p (sharper, about 10-15% slower)",
            L"2160p (very demanding)"},
-          s.render_res == 2160   ? 2
-          : s.render_res == 1440 ? 1
-                                 : 0);
+          s.render_res == 2160   ? 5
+          : s.render_res == 1440 ? 4
+          : s.render_res == 720  ? 2
+          : s.render_res == 576  ? 1
+          : s.render_res == 480  ? 0
+                                 : 3);
     y += Row;
 
     Label(L"Upscaling", L, y, 140);
@@ -812,7 +908,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         switch (LOWORD(wp)) {
         case IdBrowse:
-            if (const auto dir = PickFolder(hwnd, L"Driveclub base game folder (any region)")) {
+            if (const auto dir = PickFolder(hwnd, L"Driveclub base game folder (other versions experimental)")) {
                 SetWindowTextW(g_ui->controls[IdGameEdit], dir->c_str());
             }
             return 0;
@@ -826,7 +922,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case IdFirmwareDetails: {
             const auto title_id =
-                ReadGameTitleId(TextPath(GetText(IdGameEdit))).value_or(std::string(TitleId));
+                ReadGameTitleId(TextPath(GetText(IdGameEdit))).value_or(std::string(ReferenceTitleId));
             const auto report = InspectSysModules(title_id);
             MessageBoxW(hwnd, Widen(report.details).c_str(), L"Driveclub-PC firmware",
                         MB_OK | (report.ready ? MB_ICONINFORMATION : MB_ICONWARNING));
@@ -855,23 +951,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             CollectSettings();
             {
                 std::string error;
-                if (!PrepareSaveRoot(g_ui->settings, error)) {
-                    MessageBoxW(hwnd, Widen(error).c_str(), L"Driveclub-PC save data",
-                                MB_OK | MB_ICONERROR);
-                    return 0;
-                }
+                if (!PrepareSaveRoot(g_ui->settings, error) ||
+                    !SaveProfileOptions(g_ui->settings, error)) { ShowError(error); return 0; }
             }
             g_ui->play = true;
             DestroyWindow(hwnd);
             return 0;
         case IdQuit:
             CollectSettings();
+            {
+                std::string error;
+                if (!SaveProfileOptions(g_ui->settings, error)) { ShowError(error); return 0; }
+            }
             DestroyWindow(hwnd);
             return 0;
         }
         break;
     case WM_CLOSE:
         CollectSettings();
+        {
+            std::string error;
+            if (!SaveProfileOptions(g_ui->settings, error)) { ShowError(error); return 0; }
+        }
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
@@ -994,34 +1095,52 @@ bool ShowWindow(Settings& s) {
     return ui.play;
 }
 
+#else
+#include "driveclub/launcher_linux.inl"
 #endif
 
 } // namespace
 
-std::optional<fs::path> Run() {
+std::optional<fs::path> Run(bool force) {
     Settings s = Load();
     std::string error;
     const bool game_ok = !s.game_dir.empty() && ResolveAndValidateGame(TextPath(s.game_dir), error);
     bool firmware_ok = false;
-    const auto title_id = ReadGameTitleId(TextPath(s.game_dir)).value_or(std::string(TitleId));
+    const auto title_id = ReadGameTitleId(TextPath(s.game_dir)).value_or(std::string(ReferenceTitleId));
     FirmwareStatus(firmware_ok, title_id);
 #ifdef _WIN32
     const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-    if (s.show_launcher || shift || !game_ok || !firmware_ok) {
+    if (s.show_launcher || force || shift || !game_ok || !firmware_ok) {
         const bool play = ShowWindow(s);
-        Save(s);
+        if (!Save(s)) {
+            ShowError("Could not save launcher settings. Check data directory permissions.");
+            return std::nullopt;
+        }
         if (!play) {
             return std::nullopt;
         }
     }
 #else
-    if (!game_ok || !firmware_ok) {
-        ShowError(error.empty() ? std::string("Set game_dir in user/driveclub_pc.ini") : error);
-        return std::nullopt;
+    // The Linux launcher also provides a way to re-open settings after automatic launch.
+    if (s.show_launcher || force || !game_ok || !firmware_ok) {
+        if (!ShowLinuxWindow(s)) {
+            return std::nullopt;
+        }
     }
 #endif
     if (!PrepareSaveRoot(s, error)) {
         ShowError(error);
+        return std::nullopt;
+    }
+    // Persist and start the discovered base, rather than handing a containing folder to the core.
+    const auto resolved = ResolveAndValidateGame(s.game_dir, error);
+    if (!resolved) {
+        ShowError(error);
+        return std::nullopt;
+    }
+    s.game_dir = resolved->parent_path().string();
+    if (!Save(s)) {
+        ShowError("Could not save launcher settings. Check data directory permissions.");
         return std::nullopt;
     }
     WriteGameConfig(s);
@@ -1050,6 +1169,15 @@ bool ApplySavedRuntimeOptions(bool check_only) {
         ApplyRuntime(settings);
     }
     return true;
+}
+
+void ApplySavedProfileOptions() {
+    std::error_code ec;
+    if (fs::exists(IniPath(), ec)) {
+        const auto s = Load();
+        EmulatorSettings.SetDiscordRPCEnabled(s.discord_rpc);
+        EmulatorSettings.SetDiscordRPCEnabled(s.discord_rpc, true);
+    }
 }
 
 } // namespace DriveclubPC::Launcher

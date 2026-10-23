@@ -26,7 +26,7 @@ void SetCurrentThreadName(const char* name);
 
 void SetThreadName(void* thread, const char* name);
 
-// driveclub-pc: constrain critical threads to available performance CPUs on hybrid Windows hosts.
+// driveclub-pc: constrain critical threads to available performance CPUs on hybrid Windows/Linux hosts.
 void PinPerformanceThread(const char* name);
 
 /// driveclub-pc: logical CPUs of the fastest efficiency class (first 64), 0 on homogeneous hosts.
@@ -35,7 +35,8 @@ u64 GetPerformanceCoreMask();
 /// driveclub-pc: command processor scheduling. Wide: all performance CPUs with the reserved CPU
 /// as the ideal processor and THREAD_PRIORITY_HIGHEST, so a busy reserved CPU no longer holds the
 /// thread for a scheduler quantum. Otherwise the reserved CPU only at normal priority (the
-/// gpu_thread_core_reserve behaviour). Calling thread only; Windows only.
+/// gpu_thread_core_reserve behaviour). Calling thread only; Linux adjusts affinity without
+/// privileged priority changes.
 void SetCommandProcessorScheduling(bool wide);
 
 /// Hard-pins the calling thread to the given logical CPUs (bit N = CPU N, first 64 only).
@@ -45,6 +46,9 @@ bool SetCurrentThreadAffinityMask(u64 mask);
 /// Turns the GPU command thread core reservation on (gpu_thread_core_reserve). While it is off
 /// every mask below reads 0 and the walk does nothing.
 void SetCoreReservationEnabled(bool enabled);
+
+// Register the GPU thread so periodic walks preserve its chosen (possibly wide) mask.
+void RegisterCoreReservationOwner();
 
 /// Both logical CPUs of the physical core reserved for the GPU command thread, or 0.
 u64 GetReservedCoreMask();

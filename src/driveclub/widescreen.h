@@ -35,8 +35,8 @@ struct Output {
     return width > 0 && height > 0 && static_cast<s64>(width) * 9 > static_cast<s64>(height) * 16;
 }
 
-/// Output size for a display/window of width x height and the chosen render lines (1080, 1440,
-/// 2160). 16:9 and narrower keep the 16:9 size. Wider ones get round(lines * aspect), even; lines
+/// Output size for a display/window of width x height and the chosen render lines (720, 1080,
+/// 1440, 2160). 16:9 and narrower keep the 16:9 size. Wider ones get round(lines * aspect), even; lines
 /// drop to the next step while the frame is over kMaxPixels.
 [[nodiscard]] inline Output ComputeOutput(s32 width, s32 height, u32 lines) {
     if (!IsWide(width, height) || width > 16384 || height > 16384) {

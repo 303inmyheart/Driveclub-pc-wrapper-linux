@@ -1363,6 +1363,7 @@ add_executable(shadps4
     src/driveclub/autopilot.h
     src/driveclub/launcher.cpp
     src/driveclub/launcher.h
+    src/driveclub/launcher_linux.inl
     src/driveclub/frame_rate.cpp
     src/driveclub/frame_rate.h
     src/driveclub/deferred_recording.cpp
@@ -1571,6 +1572,14 @@ target_include_directories(shadps4 PRIVATE ${IMGUI_RESOURCES_INCLUDE})
 
 # Discord RPC
 if (ENABLE_DISCORD_RPC)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # Keep the pinned dependency unchanged; replace only its Unix transport.
+        get_target_property(DCPC_RPC_SOURCES discord-rpc SOURCES)
+        list(FILTER DCPC_RPC_SOURCES EXCLUDE REGEX "(^|/)connection_unix\\.cpp$")
+        set_property(TARGET discord-rpc PROPERTY SOURCES "${DCPC_RPC_SOURCES}")
+        target_sources(discord-rpc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/common/discord_ipc_linux.cpp")
+        target_include_directories(discord-rpc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/externals/discord-rpc/src")
+    endif()
     target_link_libraries(shadps4 PRIVATE discord-rpc)
 endif()
 

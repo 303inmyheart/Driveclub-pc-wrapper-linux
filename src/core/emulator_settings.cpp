@@ -9,6 +9,7 @@
 #include <common/scm_rev.h>
 #include <toml.hpp>
 #include "common/assert.h"
+#include "common/content_paths.h"
 #include "common/logging/formatter.h"
 #include "common/logging/log.h"
 #include "emulator_settings.h"
@@ -226,6 +227,10 @@ std::filesystem::path EmulatorSettingsImpl::GetAddonInstallDir() {
 
 void EmulatorSettingsImpl::SetAddonInstallDir(const std::filesystem::path& dir) {
     m_general.addon_install_dir.value = dir;
+}
+
+std::filesystem::path EmulatorSettingsImpl::GetAddonContentDir(std::string_view title_id) {
+    return Common::FS::AddonContentPath(GetAddonInstallDir(), title_id);
 }
 
 // ── Game-specific override management ────────────────────────────────

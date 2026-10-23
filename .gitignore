@@ -20,6 +20,11 @@
 mono_crash.*
 
 # Build results
+/.tools/
+/dist/
+/AppDir/
+/user/
+*.AppImage
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/

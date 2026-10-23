@@ -3,7 +3,9 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <ranges>
 #include <string>
+#include <vector>
 #include <fmt/std.h>
 #include <spdlog/sinks/async_sink.h>
 #include <spdlog/sinks/dup_filter_sink.h>
@@ -201,21 +203,23 @@ void UpdateLogLevels(std::string_view log_filter) {
 
     if (EmulatorSettings.IsLogEnable()) {
         for (const auto class_level : std::views::split(log_filter, ' ')) {
-            const auto class_level_pair =
-                std::views::split(class_level, ':') | std::ranges::to<std::vector<std::string>>();
+            // libstdc++ 13 (Ubuntu 24.04) does not yet implement ranges::to.
+            std::vector<std::string> class_level_pair;
+            for (const auto part : std::views::split(class_level, ':')) {
+                class_level_pair.emplace_back(part.begin(), part.end());
+            }
 
-            if (class_level_pair.size() != 2) {
+            if (class_level_pair.size() != 2 || class_level_pair.front().empty() ||
+                class_level_pair.back().empty()) {
                 LOG_ERROR(Config, "bad log filter provided");
                 continue;
             }
 
             if (class_level_pair.front()[0] == '*') {
-                default_log_level = spdlog::level_from_str(class_level_pair.back() |
-                                                           std::ranges::to<std::string>());
+                default_log_level = spdlog::level_from_str(class_level_pair.back());
             } else {
-                log_level_per_class[class_level_pair.front() | std::ranges::to<std::string>()] =
-                    spdlog::level_from_str(class_level_pair.back() |
-                                           std::ranges::to<std::string>());
+                log_level_per_class[class_level_pair.front()] =
+                    spdlog::level_from_str(class_level_pair.back());
             }
         }
     }

@@ -4,15 +4,33 @@
 #include <cstring>
 #include <ctime>
 #include "discord_rpc_handler.h"
+#include "common/logging/log.h"
+#include "common/thread.h"
+#include "common/polyfill_thread.h"
 
 namespace DiscordRPCHandler {
 
 void RPC::init() {
     DiscordEventHandlers handlers{};
+    handlers.ready = [](const DiscordUser*) { LOG_INFO(Config, "Discord RPC: client connected"); };
+    handlers.errored = [](int code, const char* message) {
+        LOG_WARNING(Config, "Discord RPC error {}: {}", code, message ? message : "unknown");
+    };
+    handlers.disconnected = [](int code, const char* message) {
+        LOG_WARNING(Config, "Discord RPC disconnected {}: {}", code, message ? message : "unknown");
+    };
+    LOG_INFO(Config, "Discord RPC: enabled; searching for a running client (native/Flatpak IPC)");
 
     Discord_Initialize("1139939140494971051", &handlers, 1, nullptr);
     startTimestamp = time(nullptr);
     rpcEnabled = true;
+    callback_thread = std::jthread([](std::stop_token stop) {
+        Common::SetCurrentThreadName("dcpc:DiscordRPC");
+        while (!stop.stop_requested()) {
+            Discord_RunCallbacks();
+            Common::StoppableTimedWait(stop, std::chrono::milliseconds(500));
+        }
+    });
 }
 
 void RPC::setStatusIdling() {
@@ -45,6 +63,8 @@ void RPC::setStatusPlaying(const std::string& game_name, const std::string& game
 void RPC::shutdown() {
     if (rpcEnabled) {
         rpcEnabled = false;
+        callback_thread.request_stop();
+        if (callback_thread.joinable()) callback_thread.join();
         Discord_ClearPresence();
         Discord_Shutdown();
     }

@@ -10,6 +10,7 @@
 
 #include "common/logging/log.h"
 #include "driveclub/render_res.h"
+#include "driveclub/patch_plan.h"
 
 namespace DriveclubPC::RenderRes {
 
@@ -117,15 +118,15 @@ u32 Bits(Kind kind, u32 w, u32 h) {
 // - eboot+0x15a697 in the heap creator: every heap's size (lookup 0x568a20, mov r14, rax),
 //   adjusted only when the name (r15) is the "VRAM_RENDERING" literal.
 // The emulator must provide the extra direct memory (General.extra_dmem_in_mbytes >= n).
-void ApplyHeap(VAddr base, u64 size) {
+bool ApplyHeap(VAddr base, u64 size) {
     const char* env = std::getenv("DCPC_VRAM_EXTRA_MB");
     const u32 mb = env ? static_cast<u32>(std::strtoul(env, nullptr, 10)) : 0;
     if (mb == 0) {
-        return;
+        return true;
     }
     if (mb > 2047) {
         LOG_WARNING(Loader, "driveclub-pc: DCPC_VRAM_EXTRA_MB={} above 2047, ignored", mb);
-        return;
+        return false;
     }
     struct Site {
         u64 addr; // call lookup (5 bytes) followed by a 3-byte mov reg, rax
@@ -141,26 +142,29 @@ void ApplyHeap(VAddr base, u64 size) {
     constexpr u64 kCave = 0x1552000; // inside the mapped tail of the code segment
     constexpr u32 kCaveBytes = 96;
     if (kCave + kCaveBytes > size) {
-        return;
+        return false;
     }
     for (const auto& site : kSites) {
+        if (site.addr + 8 > size ||
+            (site.literal && site.name + std::strlen(site.literal) + 1 > size)) return false;
         const u8* p = reinterpret_cast<const u8*>(base + site.addr);
         s32 disp;
         std::memcpy(&disp, p + 1, 4);
         if (p[0] != 0xe8 || site.addr + 5 + disp != site.lookup ||
             std::memcmp(p + 5, site.mov, 3) != 0 ||
             (site.literal &&
-             std::strcmp(reinterpret_cast<const char*>(base + site.name), site.literal) != 0)) {
+             std::memcmp(reinterpret_cast<const char*>(base + site.name), site.literal,
+                         std::strlen(site.literal) + 1) != 0)) {
             LOG_WARNING(Loader, "driveclub-pc: heap size site {:#x} does not match, skipped",
                         site.addr);
-            return;
+            return false;
         }
     }
     u8* c = reinterpret_cast<u8*>(base + kCave);
     for (u32 i = 0; i < kCaveBytes; ++i) {
         if (c[i] != 0) {
             LOG_WARNING(Loader, "driveclub-pc: heap stub area is not free, skipped");
-            return;
+            return false;
         }
     }
     const s32 delta = static_cast<s32>(mb << 20);
@@ -201,60 +205,60 @@ void ApplyHeap(VAddr base, u64 size) {
     }
     LOG_INFO(Loader, "driveclub-pc: VideoPrivate and VRAM_RENDERING +{} MiB ({} stub bytes)", mb,
              n);
+    return true;
 }
 
 void Apply(VAddr base, u64 size) {
-    ApplyHeap(base, size);
     const char* env = std::getenv("DCPC_RENDER_RES");
     u32 w = 0, h = 0;
-    if (!env || std::sscanf(env, "%ux%u", &w, &h) != 2 || w < 640 || h < 360 || w > 7680 ||
-        h > 4320) {
+    if (!env) {
+        ApplyHeap(base, size);
         return;
     }
+    if (std::sscanf(env, "%ux%u", &w, &h) != 2 || w < 640 || h < 360 || w > 7680 || h > 4320)
+        return;
     // DCPC_RENDER_RES_SITES=video: only the video-out size (eboot+0x754c19), as in the
     // widescreen patch this is based on (widescreen.h); default all sites.
     const char* sites_env = std::getenv("DCPC_RENDER_RES_SITES");
     const bool video_only = sites_env && std::strcmp(sites_env, "video") == 0;
-    u32 patched = 0;
+    PatchPlan plan{std::span<u8>{reinterpret_cast<u8*>(base), static_cast<size_t>(size)}};
     u32 considered = 0;
     for (const auto& site : kSites) {
-        if (video_only && site.addr != 0x754c19 && site.addr != 0x754c1f) {
-            continue;
-        }
+        if (video_only && site.addr != 0x754c19 && site.addr != 0x754c1f) continue;
         ++considered;
-        if (site.kind >= Kind::IntPair) {
-            if (site.addr + 16 <= size && PatchPair(base, site, w, h, false)) {
-                ++patched;
-            } else {
-                LOG_WARNING(Loader, "driveclub-pc: render size site {:#x} does not match, skipped",
-                            site.addr);
-            }
-            continue;
-        }
-        const u32 from = Bits(site.kind, 1920, 1080);
-        const u32 to = Bits(site.kind, w, h);
         if (site.addr + 16 > size) {
-            continue;
+            LOG_WARNING(Loader, "Render-size patch group outside this executable, skipped");
+            return;
         }
-        // The immediate is the last four bytes of the instruction; search its first 15 bytes.
-        u8* insn = reinterpret_cast<u8*>(base + site.addr);
-        bool done = false;
-        for (u32 off = 1; off + 4 <= 15 && !done; ++off) {
-            u32 value;
-            std::memcpy(&value, insn + off, 4);
-            if (value == from) {
-                std::memcpy(insn + off, &to, 4);
-                done = true;
+        const bool pair = site.kind >= Kind::IntPair;
+        const u64 from = pair ? Pair(site.kind, 1920, 1080) : Bits(site.kind, 1920, 1080);
+        const u64 to = pair ? Pair(site.kind, w, h) : Bits(site.kind, w, h);
+        const size_t length = pair ? 8 : 4;
+        const auto* expected = reinterpret_cast<const u8*>(&from);
+        const auto* replacement = reinterpret_cast<const u8*>(&to);
+        const auto* instruction = reinterpret_cast<const u8*>(base + site.addr);
+        bool found = false;
+        for (size_t off = pair ? 0 : 1; off <= (pair ? 4 : 15 - length); ++off) {
+            if (std::memcmp(instruction + off, expected, length) == 0) {
+                found = plan.Add(site.addr + off, {expected, length}, {replacement, length});
+                break;
             }
         }
-        if (done) {
-            ++patched;
-        } else {
-            LOG_WARNING(Loader, "driveclub-pc: render size site {:#x} does not match, skipped",
-                        site.addr);
+        if (!found) {
+            LOG_WARNING(Loader, "Render-size site {:#x} does not match: whole resolution patch "
+                                "group skipped (no partial writes)", site.addr);
+            return;
         }
     }
-    LOG_INFO(Loader, "driveclub-pc: render size {}x{}: {} of {} sites patched", w, h, patched,
+    if (!ApplyHeap(base, size)) {
+        LOG_WARNING(Loader, "Required render-memory patch did not match; resolution patch skipped");
+        return;
+    }
+    if (!plan.Commit()) {
+        LOG_WARNING(Loader, "Render-size patch validation changed; patch skipped");
+        return;
+    }
+    LOG_INFO(Loader, "driveclub-pc: render size {}x{}: {} of {} sites patched", w, h, considered,
              considered);
     if (const char* data = std::getenv("DCPC_RENDER_RES_DATA"); data && data[0] == '1') {
         u32 data_patched = 0;

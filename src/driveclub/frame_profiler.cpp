@@ -162,7 +162,9 @@ bool Decide() {
                          "resident_binds,resident_kb,sparse_submits,image_creates,image_deletes,"
                          "image_uploads,image_upload_kb,file_reads,file_read_kb,time_spin_sleeps,gpu_ms,"
                          "gpu_max_ms,"
-                         "gpu_batches,submit_delay_max_ms,present_hold_max_ms,pipeline_skips\n");
+                         "gpu_batches,submit_delay_max_ms,present_hold_max_ms,"
+                         "present_acquire_max_ms,present_lock_wait_max_ms,"
+                         "submit_lock_wait_max_ms,async_submit_lock_wait_max_ms,pipeline_skips\n");
             g_writer.tsc_ticks_per_ns = static_cast<double>(Common::EstimateRDTSCFrequency()) / 1e9;
             if (const char* at = std::getenv("DCPC_TRACE_AT")) {
                 g_trace_at_s = std::atof(at);

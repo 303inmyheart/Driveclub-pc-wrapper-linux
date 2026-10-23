@@ -9,6 +9,7 @@
 #include <vector>
 #include <CLI/CLI.hpp>
 #include <SDL3/SDL_messagebox.h>
+#include <SDL3/SDL_hints.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
@@ -35,6 +36,9 @@
 #endif
 
 int main(int argc, char* argv[]) {
+#ifdef __linux__
+    SDL_SetHint(SDL_HINT_APP_ID, "io.github.driveclub_pc");
+#endif
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
 #endif
@@ -68,6 +72,7 @@ int main(int argc, char* argv[]) {
     bool configClean = false;
     bool configGlobal = false;
     bool bigPicture = false;
+    bool forceLauncher = false;
     bool sameProcess = false;
     bool append_log{};
     bool check_only = false;
@@ -119,7 +124,8 @@ int main(int argc, char* argv[]) {
     // ---- No-args behavior ----
     // driveclub-pc: started without arguments (double-click), the settings window picks the
     // game folder and options (driveclub/launcher.h).
-    const bool launcher_mode = argc == 1;
+    app.add_flag("--launcher", forceLauncher, "Open Driveclub settings before starting");
+    const bool no_arguments = argc == 1;
 
     try {
         bool double_dash_found = false;
@@ -181,8 +187,8 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (launcher_mode) {
-        const auto chosen = DriveclubPC::Launcher::Run();
+    if (no_arguments || forceLauncher) {
+        const auto chosen = DriveclubPC::Launcher::Run(forceLauncher);
         if (!chosen) {
             return 0;
         }
@@ -287,7 +293,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     const auto driveclub_title = DriveclubPC::ReadGameTitleId(*driveclub_eboot).value_or(
-        std::string(DriveclubPC::TitleId));
+        std::string(DriveclubPC::ReferenceTitleId));
     if (check_only) {
         const auto report = DriveclubPC::InspectSysModules(driveclub_title);
         const auto root = EmulatorSettings.GetSaveDataHome().u8string();

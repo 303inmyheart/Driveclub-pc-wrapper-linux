@@ -955,6 +955,7 @@ public:
     std::filesystem::path GetFontsDir();
     void SetFontsDir(const std::filesystem::path& dir);
     std::filesystem::path GetAddonInstallDir();
+    std::filesystem::path GetAddonContentDir(std::string_view title_id);
     void SetAddonInstallDir(const std::filesystem::path& dir);
 
 private:
