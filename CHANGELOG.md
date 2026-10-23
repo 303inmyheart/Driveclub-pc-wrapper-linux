@@ -13,6 +13,25 @@ The original Windows history is preserved in
 
 No changes yet.
 
+## 0.2.6-experimental.2 — 2026-10-23
+
+Diagnostic pre-release for the Steam Deck startup crash reported in issue #3.
+No crash fix or performance improvement is claimed.
+
+- Enable a separate per-process `log/startup-<PID>.log` in the diagnostic AppImage,
+  including direct-write startup checkpoints and process mappings for address
+  interpretation. Normal builds keep tracing off unless explicitly enabled.
+- Record fatal signal number, thread ID, fault address and x86-64 instruction/stack
+  pointers without using the normal logger or unwinding in signal handlers.
+  Preserve signal termination before emulator handler installation; after
+  installation record only unhandled fatal paths, preserving guest fault handling.
+- Mark hardware-info, memory/linker/controller initialization, SDL game window,
+  HLE/module loading and guest execution boundaries. These markers bypass the
+  buffered main log that ended midway through the reporter's CPU model line.
+- This is not a full stack trace and cannot intercept SIGKILL, OOM kills, power
+  loss or every third-party signal handler. Logs can include local paths.
+
+
 ## 0.2.6-experimental.1 — 2026-10-23
 
 Pre-release for issues #2 and #3. Built locally; real-game confirmation of the

@@ -48,6 +48,7 @@
 #include "core/memory.h"
 #include "core/user_settings.h"
 #include "emulator.h"
+#include "driveclub/startup_diagnostics.h"
 #include "video_core/cache_storage.h"
 #include "video_core/renderdoc.h"
 
@@ -287,6 +288,7 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
                    std::optional<std::filesystem::path> p_game_folder,
                    std::vector<std::pair<std::filesystem::path, std::string>> mounts,
                    std::vector<std::string> const& env_vars, bool append_log) {
+    DriveclubPC::StartupDiagnostics::Mark("emulator Run: entered");
     Common::SetCurrentThreadName("shadPS4:Main");
     if (waitForDebuggerBeforeRun) {
         Debugger::WaitForDebuggerAttach();
@@ -470,6 +472,7 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
                guest_eboot_path);
 
     LOG_INFO(Loader, "Starting shadps4 emulator v{} ", Common::g_version);
+    DriveclubPC::StartupDiagnostics::Mark(Common::g_scm_rev);
     LOG_INFO(Loader, "Revision {}", Common::g_scm_rev);
     LOG_INFO(Loader, "Branch {}", Common::g_scm_branch);
     LOG_INFO(Loader, "Description {}", Common::g_scm_desc);
@@ -590,17 +593,27 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     LOG_INFO(Config, "Vulkan PipelineCacheArchived: {}",
              EmulatorSettings.IsPipelineCacheArchived());
 
+    DriveclubPC::StartupDiagnostics::Mark("hardware info: memory begin");
+    DriveclubPC::StartupDiagnostics::SnapshotMaps();
     hwinfo::Memory ram;
+    DriveclubPC::StartupDiagnostics::Mark("hardware info: OS begin");
     hwinfo::OS os;
+    DriveclubPC::StartupDiagnostics::Mark("hardware info: CPU enumeration begin");
     const auto cpus = hwinfo::getAllCPUs();
+    DriveclubPC::StartupDiagnostics::Mark("hardware info: CPU enumeration complete");
     for (const auto& cpu : cpus) {
+        DriveclubPC::StartupDiagnostics::Mark("hardware info: CPU model log begin");
         LOG_INFO(Config, "CPU Model: {}", cpu.modelName());
+        DriveclubPC::StartupDiagnostics::Mark("hardware info: core counts log begin");
         LOG_INFO(Config, "CPU Physical Cores: {}, Logical Cores: {}", cpu.numPhysicalCores(),
                  cpu.numLogicalCores());
     }
+    DriveclubPC::StartupDiagnostics::Mark("hardware info: RAM log begin");
     LOG_INFO(Config, "Total RAM: {} GB", std::round(ram.total_Bytes() / pow(1024, 3)));
+    DriveclubPC::StartupDiagnostics::Mark("hardware info: OS log begin");
     LOG_INFO(Config, "Operating System: {}", os.name());
 
+    DriveclubPC::StartupDiagnostics::Mark("hardware info: complete");
     if (param_sfo_exists) {
         LOG_INFO(Loader, "Game id: {} Title: {}", id, title);
         LOG_INFO(Loader, "Fw: {:#x} App Version: {}", fw_version, app_version);
@@ -660,9 +673,12 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     Common::Singleton<FileSys::HandleTable>::Instance()->CreateStdHandles();
 
     // Initialize components
+    DriveclubPC::StartupDiagnostics::Mark("components: memory begin");
     memory = Core::Memory::Instance();
+    DriveclubPC::StartupDiagnostics::Mark("components: controllers begin");
     controllers = Common::Singleton<Input::GameControllers>::Instance();
     DriveclubPC::Autopilot::Start();
+    DriveclubPC::StartupDiagnostics::Mark("components: linker begin");
     linker =Common::Singleton<Core::Linker>::Instance();
 
     // Load renderdoc module
@@ -697,10 +713,13 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
                                        Common::g_scm_branch, Common::g_scm_desc, game_title);
         }
     }
+    DriveclubPC::StartupDiagnostics::Mark("SDL game window: begin");
     window = std::make_unique<Frontend::WindowSDL>(EmulatorSettings.GetWindowWidth(),
                                                    EmulatorSettings.GetWindowHeight(), controllers,
                                                    window_title);
 
+    DriveclubPC::StartupDiagnostics::Mark("SDL game window: complete");
+    DriveclubPC::StartupDiagnostics::SnapshotMaps();
     g_window = window.get();
 
     if (auto icon = mnt->ReadFile("/app0/sce_sys/icon0.png")) {
@@ -776,9 +795,11 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     Libraries::Kernel::g_environment[env_max] = nullptr;
 
     // Initialize kernel and library facilities.
+    DriveclubPC::StartupDiagnostics::Mark("HLE initialization: begin");
     Libraries::InitHLELibs(&linker->GetHLESymbols());
 
     // Load the module with the linker.
+    DriveclubPC::StartupDiagnostics::Mark("game module load: begin");
     if (linker->LoadModule(guest_eboot_path) == -1) {
         LOG_CRITICAL(Loader, "Failed to load game's eboot.bin: {}", guest_eboot_path);
         std::quick_exit(0);
@@ -805,6 +826,7 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
         });
     }
 
+    DriveclubPC::StartupDiagnostics::Mark("guest execution: begin");
     linker->Execute(args);
 
     window->InitTimers();

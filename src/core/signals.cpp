@@ -12,6 +12,7 @@
 #include "core/libraries/kernel/threads/exception.h"
 #include "core/signals.h"
 #include "emulator.h"
+#include "driveclub/startup_diagnostics.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -290,6 +291,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             if (thread && thread->DispatchSignal(NativeToOrbisSignal(sig), info_p, context_p)) {
                 return;
             }
+            DriveclubPC::StartupDiagnostics::Fatal(sig, info, raw_context);
             UNREACHABLE_MSG("Unhandled access violation at code address {}: {} address {}",
                             fmt::ptr(code_address),
                             is_write  ? "Write to"
@@ -310,6 +312,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
             return;
         }
 
+        DriveclubPC::StartupDiagnostics::Fatal(sig, info, raw_context);
         UNREACHABLE_MSG("Unhandled signal {} at code address {}", sig, fmt::ptr(code_address));
     }
     case SIGSLEEP: {
@@ -326,6 +329,7 @@ void SignalHandler(int sig, siginfo_t* info, void* raw_context) {
         }
         break;
     default:
+        DriveclubPC::StartupDiagnostics::Fatal(sig, info, raw_context);
         UNREACHABLE_MSG("Unhandled signal {} at code address {}", sig, fmt::ptr(code_address));
     }
 }

@@ -75,6 +75,11 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 cxx_runtime=$("${CXX:-clang++-19}" -print-file-name=libstdc++.so.6)
 "$tools_dir/linuxdeploy-x86_64.AppImage" --appdir "$appdir" --library "$cxx_runtime"
 
+# Diagnostic artifacts enable startup tracing even when launched by double-click.
+if [[ ${STARTUP_DIAGNOSTICS:-0} == 1 ]]; then
+    sed -i '/^exec /i export DCPC_STARTUP_DIAGNOSTICS=1' "$appdir/AppRun"
+fi
+
 export ARCH=x86_64 VERSION="$version"
 "$tools_dir/appimagetool-x86_64.AppImage" \
     --mksquashfs-opt -processors --mksquashfs-opt "$jobs" "$appdir" \

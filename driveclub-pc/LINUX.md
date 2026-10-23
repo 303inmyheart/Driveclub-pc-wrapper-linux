@@ -289,3 +289,18 @@ power/thermal limits active and increasing CPU throttle counters. The user
 reported about 60 FPS again on AC power. Compare the same race and power/cooling
 conditions before attributing a regression to the renderer. No automatic power
 profile changes or clock overrides are applied.
+
+
+### Startup diagnostic AppImages
+
+The `0.2.6-experimental.2` diagnostic AppImage automatically enables
+`DCPC_STARTUP_DIAGNOSTICS=1`. Start it normally and reproduce the crash once.
+Then attach the newest `startup-<PID>.log`, `shad_log.txt` and `shadps4.log` from
+`${XDG_DATA_HOME:-$HOME/.local/share}/driveclub-pc/log` (or the custom data
+folder's `log` directory). The separate startup file uses direct writes and
+contains checkpoints, process mappings and fatal signal/register information.
+Review local paths before sharing. It is not a full backtrace; SIGKILL/OOM kills
+cannot be intercepted. No firmware, game files or saved games are needed.
+
+For local diagnostic packaging, use `STARTUP_DIAGNOSTICS=1` with the documented
+`tools/build-appimage.sh` command. Ordinary AppImages leave tracing off by default.

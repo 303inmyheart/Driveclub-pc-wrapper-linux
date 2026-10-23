@@ -25,6 +25,7 @@
 #include "core/ipc/ipc.h"
 #include "core/user_settings.h"
 #include "driveclub/launch_check.h"
+#include "driveclub/startup_diagnostics.h"
 #include "driveclub/launcher.h"
 #include "emulator.h"
 #include "imgui/big_picture/big_picture.h"
@@ -156,6 +157,9 @@ int main(int argc, char* argv[]) {
     // Initialize main log with default config
     Common::Log::Setup("shadps4.log");
 
+    DriveclubPC::StartupDiagnostics::Initialize(
+        Common::FS::GetUserPath(Common::FS::PathType::LogDir).string().c_str());
+    DriveclubPC::StartupDiagnostics::Mark("main: logging initialized");
     LOG_INFO(Debug, "Run: {}", fmt::join(std::span(argv, argc), " "));
 
     IPC::Instance().Init();
@@ -309,9 +313,12 @@ int main(int argc, char* argv[]) {
     DriveclubPC::EnsureDefaultGameConfig(driveclub_title);
     ebootPath = *driveclub_eboot;
 
+    DriveclubPC::StartupDiagnostics::Mark("main: emulator construction begin");
     auto* emulator = Common::Singleton<Core::Emulator>::Instance();
+    DriveclubPC::StartupDiagnostics::Mark("main: emulator construction complete");
     emulator->executableName = argv[0];
     emulator->waitForDebuggerBeforeRun = waitForDebugger;
+    DriveclubPC::StartupDiagnostics::Mark("main: entering emulator Run");
     emulator->Run(ebootPath, gameArgs, overrideRoot, mounts, env_vars, append_log);
 
     return 0;
