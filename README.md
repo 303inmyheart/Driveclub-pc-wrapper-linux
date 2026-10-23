@@ -1,235 +1,121 @@
 <!--
-SPDX-FileCopyrightText: 2026 shadPS4 Emulator Project
 SPDX-License-Identifier: GPL-2.0-or-later
 -->
-**Set up GR2fork with the Following Playlist:**
-https://www.youtube.com/watch?v=O8z6QPOaGDg&list=PLOgHncbXc__M&pp=sAgC
+# Driveclub-PC
 
-**Play GR2fork Online With the Following Servers:**
-(Atlanta server)
-45.76.253.42
+A personal hobby fork of the [shadPS4](https://github.com/shadps4-emu/shadPS4) PS4 emulator, tuned
+to run **Driveclub (CUSA00093, v1.28)** on Windows. It is built on
+[GR2fork](https://github.com/junminlee2004/GR2fork) by junminlee2004.
 
-**The steps to enabling GRR online is identical to GR2fork online except you do not have to enter ANYTHING in the http host override box**
+**No game data, firmware or Sony code is included.** You need your own dump of Driveclub
+(base game plus the 1.28 update) and the PS4 system modules from your own console.
 
-**Join the GR2fork discord server** (new) here for extended support. Anyone who wants to lurk for general game discussion surrounding gravity rush 1 and 2 are also welcome -> https://discord.gg/hnHRpzxGzG
+Unofficial, and not affiliated with Sony Interactive Entertainment, Evolution Studios, the
+shadPS4 team or the GR2fork author. Names and trademarks belong to their owners.
 
-**Support My Project Here** for Restored Online and New Features in the Future: https://ko-fi.com/junminlee2004
+## Tested version
 
--------
+Only **Driveclub CUSA00093 with update 1.28** has been tested. Other regions or versions may not work.
 
+## How to use
 
-**System Requirements**
+1. Download the release zip and extract it into its own folder.
+2. Get your dumps ready:
+   - the base game folder (`CUSA00093`), and next to it the 1.28 update folder named
+     `<base folder>-patch` or `<base folder>-UPDATE`;
+   - the PS4 firmware modules (`sys_modules`) from your own console.
+3. Run `Driveclub-PC.exe`. A settings window opens:
 
-| | 1080p 30 (locked) | 1080p 30 (locked) | 4K 60 (locked) | 4K 120 (locked) |
-|---|---|---|---|---|
-| CPU | Ryzen 5 2600 | Ryzen 5 3600 | Ryzen 7 5800X | Ryzen 9 9950X3D |
-| GPU | GTX 960 4 GB | RX 570 4 GB | RTX 3060 8 GB | RTX 3080 Ti 12 GB |
-| RAM | 12 GB | 12 GB | 12 GB | 12 GB |
-| Storage | SSD | SSD | SSD | SSD |
+| Setting | What to choose |
+|---|---|
+| Game folder | the base game folder (`CUSA00093`) |
+| Firmware | your `sys_modules` folder. **Import...** copies it into `user\sys_modules`, so the original can move later |
+| Frame rate | 30 / **60 (recommended)** / 120 (experimental, depends on scene and CPU temperature) |
+| Display / Window size | borderless fullscreen or window; the window size only applies in windowed mode (fullscreen always covers the display). Includes the ultrawide sizes 2560x1080, 3440x1440 and 5120x1440 |
+| Render resolution | **1080p (native)** / 1440p / 2160p: the number of lines the game renders (the engine's own scaling; extra video memory is set up automatically). The width follows the aspect ratio of the display (fullscreen) or window, see *Ultrawide* below. 1440p costs about 10–15 % FPS; 2160p is very demanding |
+| Upscaling / Sharpening | AMD FSR 1 or bilinear; RCAS sharpening off / normal / strong |
+| Anisotropic filter | 16x by default; Off keeps the game's own setting |
+| Anti-aliasing | Off / **FXAA (default)** / SMAA 1x High |
+| Prefer performance cores | on by default; keeps the busiest threads on P-cores of hybrid Intel CPUs |
+| Compile shaders in the background | on by default: new shaders and pipelines are built off the main thread, so first-time content does not freeze the game (an object may appear a few frames late). Turn off if you see graphics errors |
+| GPU readbacks | **Precise (default)**. Relaxed is faster but causes shadow and vegetation glitches; Off makes the 3D world nearly black |
+| Classic PS4 frame pacing | fallback: only turn it on if game speed feels wrong |
+| Show this window at start | if turned off, the game starts directly; hold **Shift** while launching to open the window again |
 
-<h1 align="center">
-  <br>
-  <a href="https://shadps4.net/"><img src="https://github.com/shadps4-emu/shadPS4/blob/main/.github/shadps4.png" width="220"></a>
-  <br>
-  <b>shadPS4</b>
-  <br>
-</h1>
+4. Press **Play**. Before the game boots, the launcher checks the folder, the title ID, the update
+   version and the firmware, and explains any problem it finds.
 
-<h1 align="center">
- <a href="https://discord.gg/bFJxfftGW6">
-        <img src="https://img.shields.io/discord/1080089157554155590?color=5865F2&label=shadPS4%20Discord&logo=Discord&logoColor=white" width="275">
- <a href="https://github.com/shadps4-emu/shadPS4/releases/latest">
-        <img src="https://img.shields.io/github/downloads/shadps4-emu/shadPS4/total.svg" width="140">
- <a href="https://shadps4.net/">
-        <img src="https://img.shields.io/badge/shadPS4-website-8A2BE2" width="150">
- <a href="https://x.com/shadps4">
-        <img src="https://img.shields.io/badge/-Join%20us-black?logo=X&logoColor=white" width="100">
- <a href="https://github.com/shadps4-emu/shadPS4/stargazers">
-        <img src="https://img.shields.io/github/stars/shadps4-emu/shadPS4" width="120">
-</h1>
+The game's own clock runs in real time: race times are correct at 120 FPS as well, and physics don't speed up.
 
-|               Bloodborne by From Software                   |                     Hatsune Miku Project DIVA Future Tone by SEGA                         |
-| :-----------------------------------------------------------: | :--------------------------------------------------------------------------------------------: |
-| ![Bloodborne screenshot](./documents/Screenshots/1.png) | ![Project DIVA screenshot](./documents/Screenshots/2.png) |
+**Ultrawide:** on a display or window wider than 16:9 the game renders a native wide image: the
+scene itself is rendered at the wide size (e.g. 3440x1440 at 1440p, nothing is stretched) with a
+wider horizontal field of view (Hor+). The HUD stays in the centred 16:9 area and videos are
+pillarboxed. 2160p on an ultrawide display is reduced to 1440p (the game's memory budget).
+Displays narrower than 16:9 (e.g. 16:10) keep a 16:9 picture with black bars.
+Tested in scripted races and screenshots, not yet on a real ultrawide monitor.
 
-|                  Yakuza 0 by SEGA                     |                 DRIVECLUB™ by Evolution Studios                    |
-| :------------------------------------------------------------------------: | :------------------------------------------------------------------: |
-| ![Yakuza screenshot](./documents/Screenshots/3.png) | ![DRIVECLUB screenshot](./documents/Screenshots/4.png) |
+**60 FPS with an unmodified 1.28 executable:** the game no longer runs too fast; the fix is applied
+in memory and leaves already-modified executables alone.
 
-# General information
+**Data:** settings, saves, shader cache and logs are all kept in the `user` folder next to the
+executable. Keep that folder when you update to a new release. The log of the last run is
+`user\log\shad_log.txt`.
 
-**shadPS4** is an early **PlayStation 4** emulator for **Windows**, **Linux** and **macOS** written in C++.
+**Controls:** gamepad through SDL, the same as shadPS4/GR2fork.
 
-> [!IMPORTANT]
-> This is the emulator core, which does not include a GUI. If you just want to use the emulator as an end user, download the [**QtLauncher**](https://github.com/shadps4-emu/shadps4-qtlauncher/releases) instead.
+## What it changes
 
-If you encounter problems or have doubts, do not hesitate to look at the [**Quickstart**](https://github.com/shadps4-emu/shadPS4/wiki/I.-Quick-start-%5BUsers%5D).\
-To verify that a game works, you can look at [**shadPS4 Game Compatibility**](https://github.com/shadps4-compatibility/shadps4-game-compatibility).\
-To discuss shadPS4 development, suggest ideas or to ask for help, join our [**Discord server**](https://discord.gg/bFJxfftGW6).\
-To get the latest news, go to our [**X (Twitter)**](https://x.com/shadps4) or our [**website**](https://shadps4.net/).\
-You can donate to the project via our [**Kofi page**](https://ko-fi.com/shadps4).
+Compared with GR2fork, this fork adds a Driveclub launcher with settings, 30/60/120 FPS targets,
+FXAA/SMAA and anisotropic filtering, stability fixes, and CPU-side speedups of the emulated GPU
+command processor. Full list: [driveclub-pc/CHANGES.md](driveclub-pc/CHANGES.md).
 
-# Status
+## Performance
 
-> [!IMPORTANT]
-> shadPS4 is early in development, don't expect a flawless experience.
+Test machine: ASUS ROG Zephyrus G16 (GU605CR), Intel Core Ultra 9 285H, NVIDIA GeForce RTX 5070 Ti
+Laptop GPU, 32 GB RAM, Windows 11. Same race, same game settings.
 
-Currently, the emulator can successfully run games like [**Bloodborne**](https://www.youtube.com/watch?v=5sZgWyVflFM), [**Dark Souls Remastered**](https://www.youtube.com/watch?v=-3PA-Xwszts), [**Red Dead Redemption**](https://www.youtube.com/watch?v=Al7yz_5nLag), and many other games.
+| | GR2fork (shadPS4) | Driveclub-PC |
+|---|---|---|
+| 60 FPS target, average | ~51 FPS | ~59.6 FPS |
+| 60 FPS target, frame pacing | 12–19 % of frames drop to 33 ms (30 FPS) | stable 60 |
+| 120 FPS target (played by hand) | dips to ~35 FPS | 75–90 FPS |
+| 120 FPS target, 2560x1440 render (v0.2, played by hand) | – | 65–80 FPS |
+| 120 FPS target, ultrawide (v0.2.1, scripted races) | – | 2560x1080: 84, 3440x1440: 70, 5120x1440: 67 FPS |
 
-# Why
+The 60 FPS rows come from scripted test races; the 120 FPS row comes from races played by hand.
+Results vary by up to ~15 % with laptop temperature. At 120 FPS the limit is the emulator's
+CPU-side GPU command processing, not the graphics card (27–35 % busy).
 
-This project began for fun. Given our limited free time, it may take some time before shadPS4 can run more complex games, but we're committed to making small, regular updates.
+## Building (Windows)
 
-# Building
+Requires Visual Studio 2022 Build Tools with **clang-cl**, CMake, Ninja and Git. Run from an
+"x64 Native Tools" developer prompt:
 
-## Docker
-
-For building shadPS4 in a containerized environment using Docker and VSCode, check the instructions here:  
-[**Docker Build Instructions**](https://github.com/shadps4-emu/shadPS4/blob/main/documents/building-docker.md)
-
-## Windows
-
-Check the build instructions for [**Windows**](https://github.com/shadps4-emu/shadPS4/blob/main/documents/building-windows.md).
-
-## Linux
-
-Check the build instructions for [**Linux**](https://github.com/shadps4-emu/shadPS4/blob/main/documents/building-linux.md).
-
-## macOS
-
-Check the build instructions for [**macOS**](https://github.com/shadps4-emu/shadPS4/blob/main/documents/building-macos.md).
-
-> [!IMPORTANT]
-> macOS users need at least macOS 26.0 to run shadPS4. Intel Macs are not supported.
-
-# Usage examples
-
-> [!IMPORTANT]
-> For a user-friendly GUI, download the [**QtLauncher**](https://github.com/shadps4-emu/shadps4-qtlauncher/releases).
-
-To get the list of all available commands and also a more detailed description of what each command does, please refer to the `--help` flag's output.
-
-Below is a list of commonly used command patterns:
-```sh
-shadPS4 CUSA00001 # Searches for a game folder called CUSA00001 in the list of game install folders, and boots it.
-shadPS4 --fullscreen true --config-clean CUSA00001    # the game argument is always the last one,
-shadPS4 -g CUSA00001 --fullscreen true --config-clean # ...unless manually specified otherwise.
-shadPS4 /path/to/game.elf # Boots a PS4 ELF file directly. Useful if you want to boot an executable that is not named eboot.bin.
-shadPS4 CUSA00001 -- -flag1 -flag2 # Passes '-flag1' and '-flag2' to the game executable in argv.
+```powershell
+git clone --recursive https://github.com/ondrejeder/Driveclub-pc-wrapper.git
+cd Driveclub-pc-wrapper
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
+  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE=ON
+cmake --build build --parallel
 ```
 
-# Debugging and reporting issues
+Release builds also use profile-guided optimisation, which adds about 10 %.
 
-For more information on how to test, debug and report issues with the emulator or games, read the [**Debugging documentation**](https://github.com/shadps4-emu/shadPS4/blob/main/documents/Debugging/Debugging.md).
+## Credits
 
-# Keyboard and Mouse Mappings
+- [shadPS4](https://github.com/shadps4-emu/shadPS4): the shadPS4 Emulator Project and contributors.
+  Almost all of the code here is theirs.
+- [GR2fork](https://github.com/junminlee2004/GR2fork) by junminlee2004: the fork this project starts
+  from (see [README-GR2fork.md](README-GR2fork.md)).
+- [Driveclub_Widescreen](https://github.com/rafidwayne/Driveclub_Widescreen) by rafidwayne
+  (GPL-2.0-or-later): the aspect ratio, video-out width and FOV values the ultrawide support starts from.
+- [SMAA](https://github.com/iryoku/smaa) by Jorge Jimenez et al., MIT licence
+  ([driveclub-pc/SMAA-LICENSE.txt](driveclub-pc/SMAA-LICENSE.txt)).
+- AMD FidelityFX FSR 1, already part of shadPS4.
+- The libraries in `externals/` (git submodules), each under its own licence.
 
-> [!NOTE]
-> Some keyboards may also require you to hold the Fn key to use the F\* keys. Mac users should use the Command key instead of Control, and need to use Command+F11 for full screen to avoid conflicting with system key bindings.
+## Licence
 
-| Button | Function |
-|-------------|-------------|
-F10 | FPS Counter
-Ctrl+F10 | Video Debug Info
-F11 | Fullscreen
-F12 | Trigger RenderDoc Capture (or game-only screenshot if RenderDoc is unavailable)
-Alt+F12 | Capture screenshot including HUD/dialog overlays
-
-> [!NOTE]
-> Xbox and DualShock controllers work out of the box.
-
-| Controller button | Keyboard equivalent |
-|-------------|-------------|
-LEFT AXIS UP | W |
-LEFT AXIS DOWN | S |
-LEFT AXIS LEFT | A |
-LEFT AXIS RIGHT | D |
-RIGHT AXIS UP | I |
-RIGHT AXIS DOWN | K |
-RIGHT AXIS LEFT | J |
-RIGHT AXIS RIGHT | L |
-TRIANGLE | Numpad 8 or C |
-CIRCLE | Numpad 6 or B |
-CROSS | Numpad 2 or N |
-SQUARE | Numpad 4 or V |
-PAD UP | UP |
-PAD DOWN | DOWN |
-PAD LEFT | LEFT |
-PAD RIGHT | RIGHT |
-OPTIONS | RETURN |
-BACK BUTTON / TOUCH PAD | SPACE |
-L1 | Q |
-R1 | U |
-L2 | E |
-R2 | O |
-L3 | X |
-R3 | M |
-
-Keyboard and mouse inputs can be customized in the settings menu by clicking the Controller button, and further details and help on controls are  also found there. Custom bindings are saved per-game. Inputs support up to three keys per binding, mouse buttons, mouse movement mapped to joystick input, and more.
-
-
-# Firmware files
-
-shadPS4 can load some PlayStation 4 firmware files.
-The following firmware modules are supported and must be placed in shadPS4's `sys_modules` folder.
-
-<div align="center">
-
-| Modules                        | Modules                        | Modules                        | Modules                        |
-|--------------------------------|--------------------------------|--------------------------------|--------------------------------|
-| libSceAt9Enc.sprx              | libSceAudiodec.sprx            | libSceAudiodecCpu.sprx         | libSceAudiodecCpuDdp.sprx      |
-| libSceAudiodecCpuDtsHdLbr.sprx | libSceAudiodecCpuHevag.sprx    | libSceAudiodecCpuM4aac.sprx    | libSceAvPlayer.sprx            |
-| libSceAvPlayerStreaming.sprx   | libSceBeisobmf.sprx            | libSceBemp2sys.sprx            | libSceCesCs.sprx               |
-| libSceFont.sprx                | libSceFontFt.sprx              | libSceFreeTypeOl.sprx          | libSceFreeTypeOptOl.sprx       |
-| libSceFreeTypeOt.sprx          | libSceJpegDec.sprx             | libSceJpegEnc.sprx             | libSceJson.sprx                |
-| libSceJson2.sprx               | libSceLibcInternal.sprx        | libSceNgs2.sprx                | libScePngEnc.sprx              |
-| libScePsmKitSystem.sprx        | libSceRtc.sprx                 | libSceRudp.sprx                | libSceSystemGesture.sprx       |
-| libSceUlt.sprx                 | libSceWkFontConfig.sprx        | libSceXml.sprx                 | libSceDepth.sprx               |
-| libScePadTracker.sprx          | libSceMoveTracker.sprx         |
-</div>
-
-> [!Caution]
-> The above modules are required to run the games properly and must be dumped from your legally owned PlayStation 4 console.
-
-
-
-# Main team
-
-- [**georgemoralis**](https://github.com/georgemoralis)
-- [**psucien**](https://github.com/psucien)
-- [**viniciuslrangel**](https://github.com/viniciuslrangel)
-- [**roamic**](https://github.com/roamic)
-- [**squidbus**](https://github.com/squidbus)
-- [**frodo**](https://github.com/baggins183)
-- [**Stephen Miller**](https://github.com/StevenMiller123)
-- [**kalaposfos13**](https://github.com/kalaposfos13)
-
-Logo is done by [**Xphalnos**](https://github.com/Xphalnos)
-
-<a href="https://github.com/shadps4-emu/shadPS4/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=shadps4-emu/shadPS4&max=24">
-</a>
-
-# Contributing
-
-If you want to contribute, please read the [**CONTRIBUTING.md**](https://github.com/shadps4-emu/shadPS4/blob/main/CONTRIBUTING.md) file.\
-Open a PR and we'll check it :)
-
-
-# Special Thanks
-
-A few noteworthy teams/projects who've helped us along the way are:
-
-- [**Panda3DS**](https://github.com/wheremyfoodat/Panda3DS): A multiplatform 3DS emulator from our co-author wheremyfoodat. They have been incredibly helpful in understanding and solving problems that came up from natively executing the x64 code of PS4 binaries
-
-- [**fpPS4**](https://github.com/red-prig/fpPS4): The fpPS4 team has assisted massively with understanding some of the more complex parts of the PS4 operating system and libraries, by helping with reverse engineering work and research.
-
-- **yuzu**: Our shader compiler has been designed with yuzu's Hades compiler as a blueprint. This allowed us to focus on the challenges of emulating a modern AMD GPU while having a high-quality optimizing shader compiler implementation as a base.
-
-- [**felix86**](https://github.com/OFFTKP/felix86): A new x86-64 → RISC-V Linux userspace emulator
-
-- [**emudev.org**](https://emudev.org/): A network of people interested in the documentation, emulation, simulation and re-implementation of hardware near extinction . Belongs to my friend skmp and me (shadow) also a member of it
-
-# License
-
-- [**GPL-2.0 license**](https://github.com/shadps4-emu/shadPS4/blob/main/LICENSE)
+**GPL-2.0-or-later** ([LICENSE](LICENSE)), the same as shadPS4 and GR2fork. Some files carry
+other compatible licences in their SPDX headers; the texts are in [LICENSES/](LICENSES/).
