@@ -11,6 +11,14 @@ The original Windows history is preserved in
 
 ## Unreleased
 
+- Add a saved launcher switch for Discord Rich Presence, off by default. Local
+  AppImage builds now include RPC support; enabling it requires a running Discord
+  client. Apply the launcher choice after per-game overrides and clear presence
+  on shutdown. Builds compiled without RPC show the control as unavailable.
+- Add a local PS4 username field backed by the existing player-1 profile in
+  users.json. Preserve the profile ID, other users, account fields and save paths;
+  validate the 16-byte UTF-8 user-service limit and report persistence failures.
+  This changes a local display name, not a PSN/ShadNet account identity.
 - On Linux hosts with at most four available physical CPU cores, keep the graphics
   command processor and guest/driver workers on shared cores instead of isolating
   a quarter of a 4c/8t host. Larger hosts retain their reservation policy. This

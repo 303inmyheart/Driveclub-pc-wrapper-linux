@@ -20,6 +20,7 @@ class RPC {
     RPCStatus status;
 
 public:
+    ~RPC() { shutdown(); }
     void init();
     void setStatusIdling();
     void setStatusPlaying(const std::string& game_name, const std::string& game_id);

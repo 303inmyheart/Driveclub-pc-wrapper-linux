@@ -52,6 +52,9 @@ bool ShowLinuxWindow(Settings& s) {
 
     std::array<char, 4096> game{};
     std::array<char, 4096> dlc{};
+    std::array<char, 128> username{};
+    std::snprintf(username.data(), username.size(), "%s", s.ps4_username.c_str());
+    std::string profile_status;
     std::snprintf(game.data(), game.size(), "%s", s.game_dir.c_str());
     std::snprintf(dlc.data(), dlc.size(), "%s", EmulatorSettings.GetAddonInstallDir().c_str());
     std::string game_status, firmware_status, import_status;
@@ -101,11 +104,11 @@ bool ShowLinuxWindow(Settings& s) {
             return false;
         }
         EmulatorSettings.SetAddonInstallDir(addon_dir);
-        if (!EmulatorSettings.Save()) {
-            dlc_status = "Could not save the DLC folder setting. Check the data directory permissions.";
+        if (!SaveProfileOptions(s, profile_status)) return false;
+        if (!Save(s)) {
+            profile_status = "Could not save launcher settings. Check data directory permissions.";
             return false;
         }
-        Save(s);
         return true;
     };
     const auto folder_dialog = [&](const char* key, const char* title) {
@@ -146,6 +149,24 @@ bool ShowLinuxWindow(Settings& s) {
         ImGui::TextDisabled("Linux / Vulkan");
         ImGui::Separator();
         ImGui::BeginChild("Settings", ImVec2(0, -104 * scale));
+        ImGui::TextUnformatted("Local PS4 profile");
+        if (ImGui::InputText("PS4 username", username.data(), username.size())) {
+            s.ps4_username = username.data();
+            profile_status.clear();
+        }
+        ImGui::TextDisabled("Changes the player-1 profile name; keeps its ID and saves.");
+#ifndef ENABLE_DISCORD_RPC
+        ImGui::BeginDisabled();
+#endif
+        ImGui::Checkbox("Discord Rich Presence", &s.discord_rpc);
+#ifndef ENABLE_DISCORD_RPC
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("Discord RPC is not included in this build.");
+#else
+        ImGui::TextDisabled("Show your current game in Discord (requires running Discord).");
+#endif
+        if (!profile_status.empty()) ImGui::TextWrapped("%s", profile_status.c_str());
+        ImGui::Separator();
         ImGui::TextUnformatted("Game and firmware");
         ImGui::SetNextItemWidth(-110 * scale);
         const bool game_enter = ImGui::InputText("##game", game.data(), game.size(),

@@ -14,6 +14,7 @@
 
 #include "driveclub/autopilot.h"
 #include "driveclub/frame_rate.h"
+#include "driveclub/launcher.h"
 #include "common/debug.h"
 #include "common/logging/log.h"
 #include "common/string_util.h"
@@ -92,6 +93,9 @@ void Emulator::Shutdown() {
     if (exit_done) {
         return;
     }
+#ifdef ENABLE_DISCORD_RPC
+    Common::Singleton<DiscordRPCHandler::RPC>::Instance()->shutdown();
+#endif
     Common::Log::Flush();
     Libraries::SaveData::Backup::StopThread();
     Storage::DataBase::Instance().Close();
@@ -436,6 +440,7 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
     }
 
     EmulatorSettings.Load(id);
+    DriveclubPC::Launcher::ApplySavedProfileOptions();
     // Switch to configured log
     Common::Log::Switch((!id.empty() && EmulatorSettings.IsLogSeparate()) ? id + ".log"
                                                                           : "shad_log.txt",

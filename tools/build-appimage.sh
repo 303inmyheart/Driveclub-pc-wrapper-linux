@@ -41,7 +41,7 @@ cmake -S "$root" -B "$build_dir" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="${CC:-clang-19}" \
     -DCMAKE_CXX_COMPILER="${CXX:-clang++-19}" \
     -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
-    -DENABLE_DISCORD_RPC=OFF -DENABLE_UPDATER=OFF "$@"
+    -DENABLE_DISCORD_RPC=ON -DENABLE_UPDATER=OFF "$@"
 cmake --build "$build_dir" --parallel "$jobs"
 
 # Only create a fresh staging tree. Never package game data, firmware or user settings.

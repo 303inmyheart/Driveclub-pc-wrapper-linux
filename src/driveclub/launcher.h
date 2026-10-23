@@ -24,4 +24,7 @@ std::optional<std::filesystem::path> Run(bool force = false);
 /// runtime toggles) when the game folder came from the command line.
 void ApplySavedRuntimeOptions();
 
+/// Reapply the launcher RPC choice after loading per-game overrides.
+void ApplySavedProfileOptions();
+
 } // namespace DriveclubPC::Launcher

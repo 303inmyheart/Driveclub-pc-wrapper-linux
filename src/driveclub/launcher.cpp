@@ -15,6 +15,8 @@
 #include "common/logging/log.h"
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
+#include "core/user_settings.h"
+#include "driveclub/profile_options.h"
 #include "driveclub/launch_check.h"
 #include "driveclub/launcher.h"
 #include "driveclub/widescreen.h"
@@ -48,6 +50,8 @@ namespace fs = std::filesystem;
 
 struct Settings {
     std::string game_dir;
+    std::string ps4_username;
+    bool discord_rpc = false;
     int target_fps = 60;
     int present_mode = 0; ///< Linux: Immediate, Mailbox, FIFO (in that order)
     bool fullscreen = true;
@@ -76,6 +80,9 @@ fs::path IniPath() {
 
 Settings Load() {
     Settings s;
+    if (const auto* user = UserManagement.GetUserByPlayerIndex(1))
+        s.ps4_username = user->user_name;
+    s.discord_rpc = EmulatorSettings.IsDiscordRPCEnabled();
     std::ifstream in(IniPath());
     std::map<std::string, std::string> kv;
     for (std::string line; std::getline(in, line);) {
@@ -98,6 +105,7 @@ Settings Load() {
         s.game_dir = kv["game_dir"];
     }
     s.target_fps = num("target_fps", s.target_fps);
+    s.discord_rpc = num("discord_rpc", s.discord_rpc) != 0;
     s.present_mode = std::clamp(num("present_mode", s.present_mode), 0, 2);
     s.fullscreen = num("fullscreen", s.fullscreen) != 0;
     s.width = num("width", s.width);
@@ -125,10 +133,11 @@ Settings Load() {
     return s;
 }
 
-void Save(const Settings& s) {
+bool Save(const Settings& s) {
     std::ofstream out(IniPath());
     out << "# Driveclub-PC launcher settings\n"
         << "game_dir=" << s.game_dir << "\n"
+        << "discord_rpc=" << int(s.discord_rpc) << "\n"
         << "target_fps=" << s.target_fps << "\n"
         << "present_mode=" << s.present_mode << "\n"
         << "fullscreen=" << int(s.fullscreen) << "\n"
@@ -146,6 +155,36 @@ void Save(const Settings& s) {
         << "deferred_recording=" << int(s.deferred_recording) << "\n"
         << "classic_vblank=" << int(s.classic_vblank) << "\n"
         << "show_launcher=" << int(s.show_launcher) << "\n";
+    out.flush();
+    return bool(out);
+}
+
+bool SaveProfileOptions(const Settings& s, std::string& error) {
+    if (!IsValidLocalUserName(s.ps4_username)) {
+        error = "PS4 username must contain 1–16 UTF-8 bytes, no control characters, "
+                "and cannot consist only of spaces.";
+        return false;
+    }
+    auto* user = UserManagement.GetUserByPlayerIndex(1);
+    if (!user) {
+        error = "No local PS4 profile is assigned to player 1. Check users.json.";
+        return false;
+    }
+    if (user->user_name != s.ps4_username) {
+        const auto old_name = user->user_name;
+        UserManagement.RenameUser(user->user_id, s.ps4_username);
+        if (!UserSettings.Save()) {
+            user->user_name = old_name;
+            error = "Could not save the PS4 username. Check data directory permissions.";
+            return false;
+        }
+    }
+    EmulatorSettings.SetDiscordRPCEnabled(s.discord_rpc);
+    if (!EmulatorSettings.Save()) {
+        error = "Could not save the Discord RPC setting. Check data directory permissions.";
+        return false;
+    }
+    return true;
 }
 
 std::pair<int, int> DisplaySize() {
@@ -239,6 +278,8 @@ void SetEnvDefault(const char* name, const std::string& value) {
 }
 
 void ApplyRuntime(const Settings& s) {
+    EmulatorSettings.SetDiscordRPCEnabled(s.discord_rpc);
+    EmulatorSettings.SetDiscordRPCEnabled(s.discord_rpc, true);
 #ifdef __linux__
     static constexpr std::array modes{"Immediate", "Mailbox", "Fifo"};
     EmulatorSettings.SetPresentMode(modes[s.present_mode]);
@@ -305,6 +346,8 @@ std::string Narrow(const std::wstring& w) {
 
 enum Id : int {
     IdGameEdit = 100,
+    IdUsername,
+    IdDiscordRpc,
     IdBrowse,
     IdGameStatus,
     IdFirmwareStatus,
@@ -441,6 +484,8 @@ bool Checked(int id) {
 void CollectSettings() {
     auto& s = g_ui->settings;
     s.game_dir = GetText(IdGameEdit);
+    s.ps4_username = GetText(IdUsername);
+    s.discord_rpc = Checked(IdDiscordRpc);
     static constexpr int fps_values[] = {30, 60, 120};
     s.target_fps = fps_values[std::clamp(ComboIndex(IdFps), 0, 2)];
     s.fullscreen = ComboIndex(IdDisplay) == 0;
@@ -503,6 +548,19 @@ void BuildControls() {
     const auto& s = ui.settings;
     constexpr float L = 24, C = 170, W = 400, Row = 36;
     float y = 72;
+
+    Label(L"PS4 username", L, y, 140);
+    Make(L"EDIT", Widen(s.ps4_username).c_str(), ES_AUTOHSCROLL | WS_TABSTOP,
+         C, y, W, 24, IdUsername, WS_EX_CLIENTEDGE);
+    y += 32;
+    Make(L"BUTTON", L"Discord Rich Presence", BS_AUTOCHECKBOX | WS_TABSTOP,
+         C, y, W, 22, IdDiscordRpc);
+    SendMessageW(ui.controls[IdDiscordRpc], BM_SETCHECK,
+                 s.discord_rpc ? BST_CHECKED : BST_UNCHECKED, 0);
+#ifndef ENABLE_DISCORD_RPC
+    EnableWindow(ui.controls[IdDiscordRpc], FALSE);
+#endif
+    y += 32;
 
     Label(L"Game folder", L, y, 140);
     Make(L"EDIT", Widen(s.game_dir).c_str(), ES_AUTOHSCROLL | WS_TABSTOP, C, y, W - 96, 24,
@@ -686,17 +744,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case IdPlay:
             CollectSettings();
+            {
+                std::string error;
+                if (!SaveProfileOptions(g_ui->settings, error)) { ShowError(error); return 0; }
+            }
             g_ui->play = true;
             DestroyWindow(hwnd);
             return 0;
         case IdQuit:
             CollectSettings();
+            {
+                std::string error;
+                if (!SaveProfileOptions(g_ui->settings, error)) { ShowError(error); return 0; }
+            }
             DestroyWindow(hwnd);
             return 0;
         }
         break;
     case WM_CLOSE:
         CollectSettings();
+        {
+            std::string error;
+            if (!SaveProfileOptions(g_ui->settings, error)) { ShowError(error); return 0; }
+        }
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
@@ -737,7 +807,7 @@ bool ShowWindow(Settings& s) {
     wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
     RegisterClassExW(&wc);
 
-    RECT rect{0, 0, Px(600), Px(756)};
+    RECT rect{0, 0, Px(600), Px(820)};
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     AdjustWindowRectExForDpi(&rect, style, FALSE, 0, GetDpiForSystem());
     const int w = rect.right - rect.left, h = rect.bottom - rect.top;
@@ -820,7 +890,10 @@ std::optional<fs::path> Run(bool force) {
     const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
     if (s.show_launcher || force || shift || !game_ok || !firmware_ok) {
         const bool play = ShowWindow(s);
-        Save(s);
+        if (!Save(s)) {
+            ShowError("Could not save launcher settings. Check data directory permissions.");
+            return std::nullopt;
+        }
         if (!play) {
             return std::nullopt;
         }
@@ -831,7 +904,6 @@ std::optional<fs::path> Run(bool force) {
         if (!ShowLinuxWindow(s)) {
             return std::nullopt;
         }
-        Save(s);
     }
 #endif
     // Persist and start the discovered base, rather than handing a containing folder to the core.
@@ -841,7 +913,10 @@ std::optional<fs::path> Run(bool force) {
         return std::nullopt;
     }
     s.game_dir = resolved->parent_path().string();
-    Save(s);
+    if (!Save(s)) {
+        ShowError("Could not save launcher settings. Check data directory permissions.");
+        return std::nullopt;
+    }
     WriteGameConfig(s);
     ApplyRuntime(s);
     const auto out = TargetOutput(s);
@@ -856,6 +931,15 @@ void ApplySavedRuntimeOptions() {
     std::error_code ec;
     if (fs::exists(IniPath(), ec)) {
         ApplyRuntime(Load());
+    }
+}
+
+void ApplySavedProfileOptions() {
+    std::error_code ec;
+    if (fs::exists(IniPath(), ec)) {
+        const auto s = Load();
+        EmulatorSettings.SetDiscordRPCEnabled(s.discord_rpc);
+        EmulatorSettings.SetDiscordRPCEnabled(s.discord_rpc, true);
     }
 }
 

@@ -4,10 +4,19 @@
 #include <array>
 #include "driveclub/patch_plan.h"
 #include "driveclub/game_profile.h"
+#include "driveclub/profile_options.h"
 #include "driveclub/widescreen.h"
 
 int main() {
     using namespace DriveclubPC;
+    assert(IsValidLocalUserName("Rico"));
+    assert(IsValidLocalUserName("1234567890123456"));
+    assert(IsValidLocalUserName("J\xc3\xb6rg"));
+    assert(!IsValidLocalUserName(std::string_view("a\0b", 3)));
+    assert(!IsValidLocalUserName("\xc2\x85"));
+    for (auto name : {"", "   ", "12345678901234567", "bad\nname", "bad\tname",
+                      "\xc3", "\xc0\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80"})
+        assert(!IsValidLocalUserName(name));
     assert(IsValidGameTitleId("CUSA00093"));
     assert(IsValidGameTitleId("CUSA00003"));
     assert(!IsReferenceBuild("CUSA00003", "01.28"));

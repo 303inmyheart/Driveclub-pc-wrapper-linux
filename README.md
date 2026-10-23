@@ -165,6 +165,11 @@ unverified; this release does not promise 60 FPS on handhelds.
 
 ## Build and technical documentation
 
+Upcoming builds add a launcher **Discord Rich Presence** switch (off by default)
+and a **PS4 username** field for the existing local player-1 profile. Renaming
+keeps the profile ID and saves; this does not rename a PSN/ShadNet account.
+These options are not included in 0.2.4 Experimental 1.
+
 For a complete local build without GitHub Actions, see
 [Build the Linux AppImage locally](driveclub-pc/BUILD-LINUX.md).
 Configuration and validation details are in [LINUX.md](driveclub-pc/LINUX.md).

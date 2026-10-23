@@ -4,6 +4,23 @@ This port targets **x86_64 Linux** with an AVX2-capable CPU (the existing
 `x86-64-v3` target) and a Vulkan-capable graphics driver. It runs the PS4 game
 through the bundled emulator; Wine and Proton are not required.
 
+## Profile and Discord settings (development builds)
+
+Development builds after 0.2.4 Experimental 1 add a **PS4 username** field for the
+existing player-1 local profile and a **Discord Rich Presence** switch. The name
+is stored in `users.json`; renaming preserves the user ID, other profiles and save
+directories. Names must be nonblank valid UTF-8 of at most 16 bytes, matching the
+emulated user-service buffer. This does not change a PSN/ShadNet login; an online
+session may expose its online ID instead of the local display name.
+
+Discord RPC is compiled into new AppImages but stays off by default. Enable it
+in the launcher and use a running Discord client to publish the current game.
+The saved launcher choice also applies after loading per-game settings. Builds
+explicitly compiled with `-DENABLE_DISCORD_RPC=OFF` show the switch as unavailable.
+Profile/RPC edits are applied with **Save and close** or **Play** and take effect
+on the next game start. Current public pre-releases do not gain these options
+until an updated build is published.
+
 ## Distribution requirements
 
 The AppImage is **not restricted to Ubuntu or Ubuntu-based distributions**.

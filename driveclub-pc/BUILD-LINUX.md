@@ -64,7 +64,8 @@ CC=clang-19 CXX=clang++-19 BUILD_JOBS=2 VERSION=0.2.3 \
   -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
 ```
 
-The script builds Release code with Discord RPC and the updater disabled. It
+The script builds Release code with Discord RPC support compiled in (the launcher
+switch defaults to off) and the updater disabled. It
 fetches linuxdeploy/appimagetool into `.tools`, verifies pinned hashes, stages
 libraries and licence notices, and packages only application files.
 
