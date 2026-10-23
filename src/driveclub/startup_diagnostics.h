@@ -33,6 +33,14 @@ inline void Mark(std::string_view stage) {
     Write(stage.data(), stage.size());
     Write("\n", 1);
 }
+inline void Module(std::string_view name, std::string_view state) {
+    if (fd < 0) return;
+    Write("HLE module: ", 12);
+    Write(name.data(), name.size());
+    Write(" | ", 3);
+    Mark(state);
+}
+inline void SnapshotMaps();
 // Only stack-local formatting and async-signal-safe writes in the fatal path.
 // No unwinding, allocator, normal logger or guest memory access here.
 inline void Fatal(int sig, siginfo_t* info, void* context) {
@@ -55,6 +63,8 @@ inline void Fatal(int sig, siginfo_t* info, void* context) {
 #endif
     text[used++] = '\n';
     Write(text, used);
+    // open/read/write/close are signal-safe; capture modules loaded since the last checkpoint.
+    SnapshotMaps();
 }
 inline void EarlySignal(int sig, siginfo_t* info, void* context) {
     Fatal(sig, info, context);
@@ -97,6 +107,7 @@ inline void Initialize(const char* directory) {
 }
 #else
 inline void Mark(std::string_view) {}
+inline void Module(std::string_view, std::string_view) {}
 inline void SnapshotMaps() {}
 inline void Initialize(const char*) {}
 template <typename... Args> inline void Fatal(Args...) {}

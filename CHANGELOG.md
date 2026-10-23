@@ -13,6 +13,17 @@ The original Windows history is preserved in
 
 No changes yet.
 
+## 0.2.6-experimental.3 — 2026-10-24
+
+Follow-up diagnostic pre-release for issue #3. Built locally.
+
+- Add per-library HLE initialization markers (begin, callback entry, completion,
+  or skipped regional LLE override) to the startup diagnostics. The next Deck
+  test can identify the library whose initialization fails.
+- Capture current process mappings in the fatal-signal record as well, including
+  host libraries loaded after the earlier startup checkpoints. No crash fix is
+  claimed; the reported fault remains under investigation.
+
 ## 0.2.6-experimental.2 — 2026-10-23
 
 Diagnostic pre-release for the Steam Deck startup crash reported in issue #3.

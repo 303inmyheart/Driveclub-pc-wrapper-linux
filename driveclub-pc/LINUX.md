@@ -293,7 +293,7 @@ profile changes or clock overrides are applied.
 
 ### Startup diagnostic AppImages
 
-The `0.2.6-experimental.2` diagnostic AppImage automatically enables
+The `0.2.6-experimental.2` and later diagnostic AppImages automatically enable
 `DCPC_STARTUP_DIAGNOSTICS=1`. Start it normally and reproduce the crash once.
 Then attach the newest `startup-<PID>.log`, `shad_log.txt` and `shadps4.log` from
 `${XDG_DATA_HOME:-$HOME/.local/share}/driveclub-pc/log` (or the custom data
@@ -304,3 +304,9 @@ cannot be intercepted. No firmware, game files or saved games are needed.
 
 For local diagnostic packaging, use `STARTUP_DIAGNOSTICS=1` with the documented
 `tools/build-appimage.sh` command. Ordinary AppImages leave tracing off by default.
+
+Experimental 3 adds an `HLE module: <name> | <stage>` line before/after each
+library callback. The last callback entry without a completion line identifies
+which library was being initialized when the failure occurred; it does not by
+itself prove that library's code caused the fault. The fatal record now includes
+fresh process mappings, covering host libraries loaded during initialization.

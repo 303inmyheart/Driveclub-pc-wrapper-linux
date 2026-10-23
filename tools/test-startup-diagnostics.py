@@ -17,6 +17,7 @@ with tempfile.TemporaryDirectory(prefix='dcpc-startup-test-') as temp:
 int main(int argc, char** argv) {
  DriveclubPC::StartupDiagnostics::Initialize(argv[1]);
  DriveclubPC::StartupDiagnostics::Mark("test: reached startup");
+ DriveclubPC::StartupDiagnostics::Module("libFixture.sprx", "HLE callback enter");
  if (argc > 2) raise(atoi(argv[2]));
 }
 ''')
@@ -38,8 +39,10 @@ int main(int argc, char** argv) {
         assert len(files) == 1
         text = files[0].read_text()
         assert 'test: reached startup' in text and '--- process mappings ---' in text
+        assert 'HLE module: libFixture.sprx | HLE callback enter' in text
         assert bool('FATAL signal=' in text) == bool(sig)
         if sig:
+            assert '--- process mappings ---' in text.split('FATAL signal=', 1)[1]
             assert f'signal=0x{sig:016x}' in text and ' rip=0x' in text and ' rsp=0x' in text
         assert files[0].stat().st_mode & 0o777 == 0o600
     run('disabled', enabled=False)
