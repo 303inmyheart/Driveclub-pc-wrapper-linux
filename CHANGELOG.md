@@ -11,7 +11,12 @@ The original Windows history is preserved in
 
 ## Unreleased
 
-No changes yet.
+- Exclude `libvulkan.so*` from AppImages and open `libvulkan.so.1` explicitly
+  on Linux, matching the linked FSR SDK/SDL loader SONAME. Avoid bundling a
+  second loader alongside the host's graphics stack. Experimental fix candidate
+  for issue #3: Deck logs showed two loaders and a repeatable host-loader fault.
+- Record the resolved loader path in startup diagnostics. Other platforms retain
+  their existing loader selection. Real Steam Deck confirmation is pending.
 
 ## 0.2.6-experimental.3 — 2026-10-24
 

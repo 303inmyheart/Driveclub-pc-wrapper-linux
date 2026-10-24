@@ -66,6 +66,7 @@ done < <(find "$root/externals" -type f \
 
 export APPIMAGE_EXTRACT_AND_RUN=1
 "$tools_dir/linuxdeploy-x86_64.AppImage" --appdir "$appdir" \
+    --exclude-library 'libvulkan.so*' \
     --executable "$build_dir/Driveclub-PC" \
     --desktop-file "$root/packaging/linux/io.github.driveclub_pc.desktop" \
     --icon-file "$root/packaging/linux/driveclub-pc.svg" \
@@ -73,7 +74,15 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 
 # Bundle the C++ runtime used by this build. Graphics drivers and glibc remain host-provided.
 cxx_runtime=$("${CXX:-clang++-19}" -print-file-name=libstdc++.so.6)
-"$tools_dir/linuxdeploy-x86_64.AppImage" --appdir "$appdir" --library "$cxx_runtime"
+"$tools_dir/linuxdeploy-x86_64.AppImage" --appdir "$appdir" \
+    --exclude-library 'libvulkan.so*' --library "$cxx_runtime"
+
+# Loader and ICDs must come from the same host graphics stack. Fail closed if
+# packaging changes ever reintroduce a bundled Vulkan loader.
+if find "$appdir/usr/lib" -name 'libvulkan.so*' -print -quit | rg -q .; then
+    echo 'Refusing to package a bundled Vulkan loader.' >&2
+    exit 1
+fi
 
 # Diagnostic artifacts enable startup tracing even when launched by double-click.
 if [[ ${STARTUP_DIAGNOSTICS:-0} == 1 ]]; then

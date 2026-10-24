@@ -14,6 +14,10 @@
 #endif
 
 #include <vector>
+#ifdef __linux__
+#include <dlfcn.h>
+#endif
+#include "driveclub/startup_diagnostics.h"
 #include <fmt/ranges.h>
 
 #include "common/assert.h"
@@ -270,9 +274,24 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
     setenv("VK_DRIVER_FILES", icd_path.c_str(), true);
 #endif
 
+#ifdef __linux__
+    // Match the SONAME used by the FSR SDK's link dependency and SDL. Opening
+    // unversioned libvulkan.so can select a second loader from a different path.
+    static vk::detail::DynamicLoader dl("libvulkan.so.1");
+#else
     static vk::detail::DynamicLoader dl;
-    VULKAN_HPP_DEFAULT_DISPATCHER.init(
-        dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr"));
+#endif
+    const auto get_instance_proc = dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
+    ASSERT_MSG(get_instance_proc, "Vulkan loader has no vkGetInstanceProcAddr");
+#ifdef __linux__
+    Dl_info loader_info{};
+    if (dladdr(reinterpret_cast<void*>(get_instance_proc), &loader_info) && loader_info.dli_fname) {
+        LOG_INFO(Render_Vulkan, "Linux Vulkan loader: {}", loader_info.dli_fname);
+        DriveclubPC::StartupDiagnostics::Mark("Vulkan loader resolved:");
+        DriveclubPC::StartupDiagnostics::Mark(loader_info.dli_fname);
+    }
+#endif
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(get_instance_proc);
 
     const auto [available_version_result, available_version] =
         VULKAN_HPP_DEFAULT_DISPATCHER.vkEnumerateInstanceVersion

@@ -310,3 +310,16 @@ library callback. The last callback entry without a completion line identifies
 which library was being initialized when the failure occurred; it does not by
 itself prove that library's code caused the fault. The fatal record now includes
 fresh process mappings, covering host libraries loaded during initialization.
+
+
+### Host Vulkan loader
+
+Linux AppImages exclude `libvulkan.so*`. The host must provide `libvulkan.so.1`
+and compatible ICDs/drivers. The renderer opens that versioned SONAME explicitly,
+matching the FSR SDK's linked dependency and SDL, rather than probing an
+unversioned `libvulkan.so` first. Startup diagnostics record the resolved path.
+This avoids the bundled/host loader mixture observed in issue #3; confirmation
+that it fixes the Steam Deck crash is pending. The previous bundled loader had
+the same build ID as the maintainer's system loader, whereas the Deck used a
+different host loader version. That difference is a plausible explanation for
+why the problem was not reproduced locally, not proof of its root cause.
