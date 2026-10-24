@@ -11,6 +11,12 @@ The original Windows history is preserved in
 
 ## Unreleased
 
+No changes yet.
+
+## 0.2.6-experimental.4 — 2026-10-24
+
+Experimental Vulkan-loader fix candidate for issue #3, built locally.
+
 - Exclude `libvulkan.so*` from AppImages and open `libvulkan.so.1` explicitly
   on Linux, matching the linked FSR SDK/SDL loader SONAME. Avoid bundling a
   second loader alongside the host's graphics stack. Experimental fix candidate
