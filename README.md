@@ -3,10 +3,16 @@ SPDX-License-Identifier: GPL-2.0-or-later
 -->
 # Driveclub-PC — Linux AppImage
 
+> **DEVELOPMENT ENDED — FINAL RELEASE 0.2.6 (2026-10-29).**
+> 303inmyheart has stopped work on this Linux fork. No further development,
+> fixes, releases or support are planned by the maintainer. This repository and
+> its final AppImage remain available as-is; others may fork and continue it.
+> This notice applies only to this Linux fork, not to the original upstream projects.
+
 [![Linux AppImage](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/actions/workflows/linux-appimage.yml/badge.svg)](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/actions/workflows/linux-appimage.yml)
 
 **Linux port created by Codex (OpenAI), at the request of 303inmyheart.**
-This repository is maintained by [303inmyheart](https://github.com/303inmyheart).
+This Linux fork was maintained by [303inmyheart](https://github.com/303inmyheart).
 Codex's creator credit applies specifically to the Linux port, native Linux
 launcher adaptation, AppImage packaging and Linux build workflow.
 
@@ -23,11 +29,18 @@ game itself into a native Linux game.
 
 ## Download and requirements
 
-Linux release **0.2.5** combines original upstream **0.2.5**
-(`d9701fc1`) with the Linux fork patches through `6cc814a5`. It adds Linux controls
-for upstream frame generation and a custom save root, plus Flatpak Discord IPC
-discovery. The maintainer reports successful testing of the preceding Linux preview;
-frame generation and other hardware/races still need broader validation. Upstream's Windows performance/PGO results do not validate this Linux build.
+**[Final release 0.2.6](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/releases/tag/v0.2.6)**
+promotes the locally built **0.2.6 Experimental 4** AppImage without changing
+its executable. It includes the host Vulkan-loader fix that the Steam Deck
+reporter confirmed starts successfully, low-resolution scene settings and the
+previous Linux features. Startup diagnostics remain enabled. This is the final
+published version, not a guarantee of compatibility with every game dump,
+race or device. Upstream's Windows performance/PGO results do not validate this Linux build.
+
+Known limitations remain: merged game folders whose metadata identifies an update
+(`CATEGORY=gp`) may be rejected (issue #2); reliable 30/40/60 FPS on Steam Deck
+is not guaranteed; temporal upscaling/frame generation remain incomplete and
+experimental. These issues will not receive further work from this maintainer.
 
 Download the `.AppImage` and its `.sha256` file from
 [GitHub Releases](https://github.com/303inmyheart/Driveclub-pc-wrapper-linux/releases).

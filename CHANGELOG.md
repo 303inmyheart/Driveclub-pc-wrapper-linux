@@ -11,7 +11,21 @@ The original Windows history is preserved in
 
 ## Unreleased
 
-No changes yet.
+Development of this Linux fork has ended. No further maintainer updates are planned.
+
+## 0.2.6 — 2026-10-29 — Final release
+
+- Promote the locally built 0.2.6 Experimental 4 executable unchanged to a regular
+  final release. The renamed AppImage has identical bytes/SHA-256; its embedded
+  diagnostic version and source revision remain those of Experimental 4.
+- Retain the host-only Vulkan loader fix, confirmed by the Steam Deck reporter
+  to resolve startup in their test. No universal compatibility/FPS claim is made.
+- Clearly mark the Linux fork as discontinued in the README and release notes.
+  No further development, fixes, releases or support are planned by 303inmyheart.
+  This applies only to this fork; upstream authors retain their credits.
+- Preserve known limitations: merged CATEGORY=gp installation rejection (issue #2),
+  unverified sustained Deck frame rates, and incomplete temporal/FG inputs.
+- Release assets are prepared locally; no GitHub Actions build is used.
 
 ## 0.2.6-experimental.4 — 2026-10-24
 
